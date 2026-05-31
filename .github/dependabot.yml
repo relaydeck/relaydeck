@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Keep GitHub Actions pinned-but-fresh. Security-relevant for the
+  # pull_request_target gate + the OIDC publish workflow. Grouped so all
+  # action bumps arrive as a single PR (one commit) rather than one per action.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore(actions)"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Python dependencies declared in pyproject.toml. Grouped into one PR.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      python:
+        patterns: ["*"]

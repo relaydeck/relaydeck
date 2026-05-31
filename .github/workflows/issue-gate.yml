@@ -1,0 +1,110 @@
+name: Issue Gate
+
+# Auto-close issues from contributors who haven't been approved, with a comment
+# explaining how to get reopened. Repository collaborators are always exempt.
+#
+# This contribution-gate pattern is adapted, with thanks, from the pi project
+# (earendil-works/pi) — see CONTRIBUTING.md. relaydeck's variant drops the
+# weekend-review rule and always exempts collaborators.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-contributor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check issue author
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
+            const VALID_CAPABILITIES = new Set(['issue', 'pr']);
+            const issueAuthor = context.payload.issue.user.login;
+            const defaultBranch = context.payload.repository.default_branch;
+
+            if (issueAuthor.endsWith('[bot]')) {
+              console.log(`Skipping bot: ${issueAuthor}`);
+              return;
+            }
+
+            async function getPermission(username) {
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username,
+                });
+                return data.permission;
+              } catch {
+                return null;
+              }
+            }
+
+            async function getTextFile(path) {
+              const { data } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path,
+                ref: defaultBranch,
+              });
+              if (!('content' in data) || typeof data.content !== 'string') {
+                throw new Error(`Expected file content for ${path}`);
+              }
+              return Buffer.from(data.content, 'base64').toString('utf8');
+            }
+
+            function parseApprovedUsers(content) {
+              const users = new Map();
+              for (const rawLine of content.split('\n')) {
+                const line = rawLine.trim();
+                if (!line || line.startsWith('#')) continue;
+                const parts = line.split(/\s+/);
+                if (parts.length !== 2) continue;
+                const [username, capability] = parts;
+                const cap = capability.toLowerCase();
+                if (!VALID_CAPABILITIES.has(cap)) continue;
+                users.set(username.toLowerCase(), cap);
+              }
+              return users;
+            }
+
+            const permission = await getPermission(issueAuthor);
+            if (['admin', 'maintain', 'write'].includes(permission)) {
+              console.log(`${issueAuthor} is a collaborator (${permission}) — exempt`);
+              return;
+            }
+
+            const approved = parseApprovedUsers(await getTextFile(APPROVED_FILE));
+            const capability = approved.get(issueAuthor.toLowerCase());
+            if (capability === 'issue' || capability === 'pr') {
+              console.log(`${issueAuthor} is approved for ${capability}`);
+              return;
+            }
+
+            const cm = `https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md`;
+            const message = [
+              'Thanks for the report. This issue was auto-closed — issues from first-time contributors are closed by default while maintainers review the tracker on their own schedule.',
+              '',
+              `Maintainers reopen worthwhile issues. Issues that don't meet the quality bar in [CONTRIBUTING.md](${cm}) may not be reopened or receive a reply.`,
+              '',
+              'Once a maintainer replies `lgtmi`, your future issues stay open. `lgtm` keeps your future issues **and** PRs open.',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: message,
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'closed',
+            });

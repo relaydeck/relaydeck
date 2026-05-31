@@ -1,0 +1,46 @@
+name: Change / feature proposal
+description: Propose a change or feature (required for first-time contributors before opening a PR)
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you start:** read [CONTRIBUTING.md](https://github.com/relaydeck/relaydeck/blob/main/CONTRIBUTING.md).
+
+        New issues from first-time contributors are auto-closed by default. Maintainers review auto-closed issues and reopen the worthwhile ones. Issues that don't meet the quality bar in CONTRIBUTING.md may not be reopened or receive a reply.
+
+        Open a proposal **before** sending a PR — PRs from contributors who haven't been approved with `lgtm` are auto-closed.
+
+        Keep this short. If it doesn't fit on one screen, it's too long. Write in your own voice.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What do you want to change?
+      description: Be specific and concise.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why?
+      description: What problem does this solve? Who is it for?
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: How? (optional)
+      description: Brief technical approach if you have one in mind. Note if it's a plugin vs. a core change — relaydeck keeps its core minimal and pushes features into plugins.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: implement
+    attributes:
+      label: Implementation
+      options:
+        - label: I'd like to implement this myself if approved
+          required: false

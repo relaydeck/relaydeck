@@ -1,0 +1,77 @@
+name: e2e
+
+# Runs the `e2e` pytest marker against real harness binaries + a real
+# LLM endpoint. Kept in a dedicated workflow so the fast unit-test CI
+# stays free of API latency + cost.
+#
+# Triggers:
+#   - pull_request to main: end-to-end smoke gate before merge
+#   - workflow_dispatch: manual re-run when investigating a regression
+#
+# Cost ceiling: the smoke test issues a single short prompt to the
+# cheapest free-tier model on OpenRouter. Concurrency cancels stacked
+# runs so a fast follow-up push doesn't queue. Job timeout is 5 min.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pi-smoke:
+    name: pytest -m e2e (pi)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Skip silently when the secret is missing -- e.g. on a fork PR or
+    # a workflow_dispatch run from a contributor without org access.
+    # The job appears as 'skipped' in the UI rather than 'failed'.
+    # Gated on the org owner so it runs on the canonical repo and still
+    # skips on forks (which won't have the OPENROUTER_API_KEY secret).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.repository_owner == 'relaydeck' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install project + dev deps
+        run: uv sync --frozen
+
+      - name: Install pi (npm)
+        # @mariozechner/pi-coding-agent installs the `pi` binary into
+        # the npm-global bin dir. Pinning to a specific version would
+        # make the test reproducible -- left floating for now so we
+        # notice when upstream changes the CLI surface.
+        run: |
+          npm install -g @mariozechner/pi-coding-agent
+          pi --help | head -3
+
+      - name: Run E2E suite
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # Pi reads the API key from this env var by default when
+          # `--provider openrouter` is set.
+          # Model slug is read from the repo-level Actions variable
+          # `RELAYDECK_E2E_MODEL` so it can be swapped without code changes
+          # (Settings -> Secrets and variables -> Actions -> Variables).
+          # Fallback covers the case where the variable hasn't been set
+          # yet -- pick something currently reachable on openrouter.
+          RELAYDECK_E2E_MODEL: ${{ vars.RELAYDECK_E2E_MODEL || 'openai/gpt-4o-mini' }}
+          RELAYDECK_E2E_HEADLESS: "1"
+        run: |
+          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "::warning::OPENROUTER_API_KEY not set; skipping e2e suite"
+            exit 0
+          fi
+          uv run pytest -v -m e2e --tb=short

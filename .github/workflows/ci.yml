@@ -1,0 +1,134 @@
+name: ci
+
+on:
+  # Gate runs before a PR merges. With rebase-only + required status checks,
+  # this covers main without also double-running on every push to it.
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel any superseded run for the same ref so a fast follow-up
+# push doesn't pile a long queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest + plugin verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          # Cache uv's wheel cache so subsequent runs avoid the cold
+          # download of fastapi/uvicorn/torch-adjacent deps.
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install project + dev deps
+        run: uv sync --frozen
+
+      - name: Run test suite
+        # Single source of truth. Auth tests, durability tests, and
+        # the usage-limits showcase plugin all live in tests/.
+        # Excludes `e2e`: those need a real harness binary + LLM API
+        # key and run in the dedicated `e2e` workflow.
+        run: uv run pytest -q -m "not e2e"
+
+      - name: Verify plugin manifests + lockfile
+        # `relaydeck plugin verify` parses every plugin.toml and writes the
+        # plugins.lock baseline. CI runs it as a smoke check — if the
+        # set of manifest-backed plugins diverges from what the loader
+        # accepts, this command exits non-zero before downstream tests
+        # have a chance to mask the regression.
+        run: uv run relaydeck plugin verify
+
+      - name: Daemon smoke test
+        # Boot the daemon, hit /healthz (public), hit /api/agents with
+        # the on-disk token (authenticated), then tear down. Catches
+        # regressions in the auth middleware, the token bootstrap, and
+        # the basic API wiring even when unit tests still pass.
+        run: |
+          set -euo pipefail
+          export RELAYDECK_CONFIG_HOME=$RUNNER_TEMP/relaydeck-cfg
+          mkdir -p "$RELAYDECK_CONFIG_HOME"
+          uv run relaydeck serve --port 8765 &
+          DAEMON_PID=$!
+          # Wait up to 15s for /healthz to come up.
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8765/healthz >/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:8765/healthz
+          # An unauthenticated /api/agents must 401.
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/api/agents)
+          [ "$code" = "401" ] || { echo "expected 401 without token, got $code"; exit 1; }
+          # With the token, it must 200.
+          TOKEN=$(cat "$HOME/.relaydeck/auth-token")
+          curl -sf -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/api/agents >/dev/null
+          kill $DAEMON_PID
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dev deps
+        # Use the project's locked ruff (in dev deps) so CI and local
+        # runs see the same version. `uv sync` includes dev by default.
+        run: uv sync --frozen
+
+      - name: Ruff check (soft)
+        # CI lints with `--exit-zero` for now: the codebase has known
+        # style debt unrelated to the platform foundation work, and we
+        # don't want green-tests-but-red-CI noise. Once the catalog is
+        # cleaned up, drop --exit-zero and treat lint as a gate.
+        run: uv run ruff check relaydeck tests --exit-zero
+
+  build:
+    name: build (sdist + wheel)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build sdist + wheel
+        # Pre-release insurance: catches packaging regressions (missing package
+        # data, bad metadata, a wheel that doesn't include plugins/) on every PR
+        # instead of at `release.yml` publish time.
+        run: uv build
+
+      - name: Validate distribution metadata
+        run: uvx twine check dist/*

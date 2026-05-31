@@ -11,11 +11,10 @@ These cover the parts that don't require python-telegram-bot:
   - Mention-detection helper
 
 PTB-dependent paths (worker lifecycle, polling, getMe, webhook dispatch)
-are integration-tested separately when `python-telegram-bot` is
-installed via `pip install 'relaydeck-plugins[telegram]'` in split installs or
-`pip install 'relaydeck[telegram]'` in the monorepo distribution. The plugin
-loads fine without PTB — the worker stays absent and the status snapshot
-explains how to fix it.
+are integration-tested separately. `python-telegram-bot` ships with
+relaydeck as a core dependency, so it's present on a normal install. The
+plugin still fails closed if the import is somehow broken — the worker
+stays absent and the status snapshot explains how to fix it.
 """
 
 from __future__ import annotations
@@ -365,8 +364,10 @@ def test_telegram_skill_materialized_via_manager(tmp_path, monkeypatch):
 
 
 def test_worker_require_ptb_raises_useful_error(monkeypatch):
-    """When PTB isn't installed we want a clear error message, not a
-    bare ImportError. The CLI / status surface relies on this string."""
+    """PTB is a core dependency now, so an import failure means a broken
+    install. We still want a clear error (not a bare ImportError) that
+    points at reinstalling — never at the old optional extras. The CLI /
+    status surface relies on this string."""
     import builtins
 
     from plugins.telegram import worker as worker_mod
@@ -382,14 +383,21 @@ def test_worker_require_ptb_raises_useful_error(monkeypatch):
         worker_mod.require_ptb()
     message = str(excinfo.value)
     assert "python-telegram-bot" in message
-    assert "relaydeck-plugins[telegram]" in message
-    assert "relaydeck[telegram]" in message
+    assert "reinstall relaydeck" in message
+    # No longer advertise the optional extras — telegram ships in core.
+    assert "relaydeck[telegram]" not in message
+    assert "relaydeck-plugins[telegram]" not in message
 
 
-def test_dashboard_install_hint_prefers_split_telegram_extra():
+def test_dashboard_has_no_telegram_extra_install_hints():
+    """Telegram ships in core now, so the panel must not advertise the old
+    optional-extra install commands (they named three different packages and
+    confused operators)."""
     panel = Path("plugins/telegram/static/panel.js").read_text()
 
-    assert "relaydeck-plugins[telegram]" in panel
+    assert "relaydeck[telegram]" not in panel
+    assert "relaydeck-plugins[telegram]" not in panel
+    assert "--extra telegram" not in panel
 
 
 # ── Web monitoring: activity feed + health + per-route mention ───────

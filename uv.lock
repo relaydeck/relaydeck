@@ -1310,6 +1310,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "croniter" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "numpy" },
@@ -1317,6 +1318,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyte" },
     { name = "python-multipart" },
+    { name = "python-telegram-bot" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "sentence-transformers" },
@@ -1327,17 +1329,8 @@ dependencies = [
     { name = "websockets" },
 ]
 
-[package.optional-dependencies]
-cron = [
-    { name = "croniter" },
-]
-telegram = [
-    { name = "python-telegram-bot" },
-]
-
 [package.dev-dependencies]
 dev = [
-    { name = "croniter" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "python-multipart" },
@@ -1350,7 +1343,7 @@ e2e = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
-    { name = "croniter", marker = "extra == 'cron'", specifier = ">=2.0" },
+    { name = "croniter", specifier = ">=2.0" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "fastapi", specifier = ">=0.136.1" },
     { name = "numpy", specifier = ">=2.0" },
@@ -1358,7 +1351,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyte", specifier = ">=0.8" },
     { name = "python-multipart", specifier = ">=0.0.20" },
-    { name = "python-telegram-bot", marker = "extra == 'telegram'", specifier = ">=21.0" },
+    { name = "python-telegram-bot", specifier = ">=21.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=13.0" },
     { name = "sentence-transformers", specifier = ">=4.1.0" },
@@ -1372,7 +1365,6 @@ provides-extras = ["telegram", "cron"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "croniter", specifier = ">=2.0" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=1.1" },
     { name = "python-multipart", specifier = ">=0.0.29" },

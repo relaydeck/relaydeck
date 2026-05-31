@@ -3,8 +3,8 @@ LoopAgent — schedule- or event-driven action dispatcher.
 
 A loop agent is a `BaseAgent` whose `run()` either:
   * ticks on a fixed interval (`schedule: interval:30s`), or
-  * fires on a cron schedule (`schedule: cron:0 9 * * 1-5`) — requires
-    the `croniter` soft dep (`pip install 'relaydeck[cron]'`), or
+  * fires on a cron schedule (`schedule: cron:0 9 * * 1-5`) — parsed by
+    `croniter`, which ships with relaydeck as a core dependency, or
   * reacts to plugin-bus events matching a pattern
     (`schedule: on_event:agent.error`)
 

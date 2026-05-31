@@ -8,9 +8,11 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "click>=8.1",
+    "croniter>=2.0",
     "cryptography>=42.0",
     "fastapi>=0.136.1",
     "python-multipart>=0.0.20",
+    "python-telegram-bot>=21.0",
     "openai>=1.50",
     "numpy>=2.0",
     "pyyaml>=6.0.3",
@@ -32,20 +34,15 @@ Documentation = "https://relaydeck.ai"
 Issues = "https://github.com/relaydeck/relaydeck/issues"
 
 [project.optional-dependencies]
-# Bundled telegram gateway plugin. Pulled in via `pip install 'relaydeck[telegram]'`
-# or `uv tool install '.[telegram]'`. The plugin fails closed (with a
-# helpful hint) when PTB isn't importable, so the daemon stays up even
-# when the extra isn't installed.
-telegram = [
-    "python-telegram-bot>=21.0",
-]
-# Cron schedules for loop automations (`schedule: cron:...`). Soft dep:
-# interval + on_event schedules work without it; only `cron:` parsing
-# needs croniter, and the loop agent raises a helpful install hint when
-# it's missing. Pull in via `pip install 'relaydeck[cron]'`.
-cron = [
-    "croniter>=2.0",
-]
+# Backward-compat no-op extras. `python-telegram-bot` (telegram gateway) and
+# `croniter` (cron schedules) are now CORE dependencies — they ship with every
+# install so the Telegram bot and `schedule: cron:...` workers just work out of
+# the box. These empty extras are kept only so existing
+# `pip install 'relaydeck[telegram]'` / `'relaydeck[cron]'` invocations (and the
+# `uv sync --extra ...` form) keep resolving instead of erroring; they pull in
+# nothing extra. Safe to drop in a future major release.
+telegram = []
+cron = []
 
 [project.scripts]
 relaydeck = "relaydeck:main"
@@ -66,11 +63,9 @@ dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.1",
     "ruff>=0.15.12",
-    # croniter is an optional runtime extra (the `cron` extra) for end
-    # users, but cron is a first-class Workers trigger so the default
-    # dev/CI environment installs it — otherwise the cron tests fail in a
-    # clean `uv sync --frozen` checkout.
-    "croniter>=2.0",
+    # croniter used to be pinned here because it was an optional runtime
+    # extra and the cron tests need it; it's now a core dependency, so it
+    # arrives via [project.dependencies] in every environment.
     "python-multipart>=0.0.29",
 ]
 # Browser-driven E2E (`pytest -m e2e tests/e2e/test_web_harness_e2e.py`).

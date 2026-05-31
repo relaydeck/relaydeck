@@ -53,9 +53,11 @@ def parse_schedule(schedule: str) -> tuple[str, Any]:
         try:
             from croniter import croniter
         except ImportError as exc:
+            # croniter is a core relaydeck dependency, so this only fires on a
+            # broken/partial install — surface that rather than a bare traceback.
             raise ValueError(
-                "cron schedules require the croniter soft dependency — "
-                "install with `pip install 'relaydeck[cron]'`"
+                "cron schedules need croniter, which ships with relaydeck — this "
+                "import failure points to a broken install; reinstall relaydeck."
             ) from exc
         if not value or not croniter.is_valid(value):
             raise ValueError(f"invalid cron expression: {value!r}")

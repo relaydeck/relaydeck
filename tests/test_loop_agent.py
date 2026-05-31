@@ -81,8 +81,8 @@ class TestParseSchedule:
         assert parse_schedule("on_event:agent.*") == ("on_event", "agent.*")
 
     def test_cron_accepted(self):
-        # croniter is installed in the dev/test env (the `cron` extra),
-        # so a valid expression parses to a cron schedule.
+        # croniter is a core dependency, so a valid expression always
+        # parses to a cron schedule.
         assert parse_schedule("cron:0 9 * * 1-5") == ("cron", "0 9 * * 1-5")
 
     def test_cron_every_minute(self):

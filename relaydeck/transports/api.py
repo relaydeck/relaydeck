@@ -188,8 +188,8 @@ def _summarize_trigger(schedule: Any) -> dict[str, Any] | None:
         kind, value = parse_schedule(schedule)
         return {"kind": kind, "value": value, "raw": schedule}
     except Exception:
-        # An invalid/uninstallable schedule (e.g. cron without croniter)
-        # still surfaces so the operator sees why the worker won't fire.
+        # An invalid schedule (e.g. a malformed cron expression) still
+        # surfaces so the operator sees why the worker won't fire.
         return {"kind": "invalid", "value": schedule, "raw": schedule}
 
 
@@ -3014,7 +3014,7 @@ def create_app(config_home: Path | None = None) -> FastAPI:
     async def validate_worker_config(body: dict[str, Any]):
         """Validate a worker's trigger + actions before create/edit so the
         web form can give immediate feedback. Cron validity is
-        server-side knowledge (depends on the croniter soft dep), so this
+        server-side knowledge (croniter runs on the daemon), so this
         can't be done client-only. Returns {ok, errors:[...]}."""
         from relaydeck.automation import action_kinds
 

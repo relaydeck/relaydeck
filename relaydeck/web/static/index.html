@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-density="regular">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>relaydeck</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <meta name="theme-color" content="#F4EEE0">
+  <!-- Fonts are vendored locally (see fonts/fonts.css) — no Google Fonts
+       CDN, so the dashboard renders fully offline / air-gapped. -->
+  <link rel="stylesheet" href="/static/fonts/fonts.css">
+  <!-- xterm.js: full terminal emulator the Terminal tile uses to render
+       TUI harnesses (claude-code, codex, pi) without mangling them. Loaded
+       as classic scripts (not modules) — they attach Terminal / FitAddon
+       / WebglAddon to globals, which the terminal tile reads at mount.
+       Vendored locally (no CDN) — @xterm/xterm 5.5.0 + addons. -->
+  <link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
+  <script src="/static/vendor/xterm/xterm.min.js"></script>
+  <script src="/static/vendor/xterm/addon-fit.min.js"></script>
+  <script src="/static/vendor/xterm/addon-webgl.min.js"></script>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/panels.css">
+  <link rel="stylesheet" href="/static/workers.css">
+  <link rel="stylesheet" href="/static/models.css">
+  <link rel="stylesheet" href="/static/theme.css">
+  <link rel="stylesheet" href="/static/uikit/uikit.css">
+</head>
+<body>
+  <!-- App is mounted by /static/app.js (it clears document.body on boot). -->
+  <div style="height:100vh;display:grid;place-items:center;color:var(--t-3);font-family:var(--f-mono);font-size:11px">
+    loading relaydeck…
+  </div>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+/* uikit.css — styles for the @relaydeck/ui components that introduce NEW class
+   names (everything else reuses the dashboard's existing global classes:
+   .btn/.chip/.sbadge/.sdot/.card/.subtab/.stat-*/.side-*/.pl-nav-*). All values
+   route through the design tokens so the kit themes with the rest of the app.
+
+   Loaded as a global stylesheet (index.html) — components render in light DOM,
+   so these selectors apply directly. */
+
+/* Custom elements that should not generate a layout box — their child is the
+   real control / participates in the parent's flex or grid directly. */
+rd-toggle { display: contents; }
+rd-settings-form { display: block; }
+
+/* ── settings form (rd-settings-form) ───────────────────────────────── */
+.rd-fields { display: flex; flex-direction: column; gap: 12px; }
+.rd-field { display: flex; flex-direction: column; gap: 5px; }
+.rd-field.inline { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+.rd-field-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rd-field-head label {
+  font-family: var(--f-mono); font-size: var(--t-sm); color: var(--t-1);
+  display: flex; align-items: center; gap: 8px;
+}
+.rd-field-desc { font-size: var(--t-xs); color: var(--t-3); line-height: 1.45; }
+.rd-field-ctrl { display: flex; }
+.rd-field-ctrl input,
+.rd-field-ctrl select,
+.rd-field-ctrl textarea {
+  width: 100%; background: var(--bg-2); color: var(--t-1);
+  border: 1px solid var(--line-2); border-radius: var(--r-1);
+  padding: 6px 9px; font-family: var(--f-mono); font-size: var(--t-sm);
+}
+.rd-field-ctrl textarea { resize: vertical; min-height: 60px; line-height: 1.5; }
+.rd-src {
+  font-family: var(--f-mono); font-size: var(--t-xxs); color: var(--t-3);
+  border: 1px solid var(--line-3); border-radius: var(--r-0); padding: 0 5px;
+}
+.rd-src.workspace, .rd-src.global { color: var(--acc); border-color: var(--acc-line); }
+.rd-form-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.rd-form-msg { font-family: var(--f-mono); font-size: var(--t-xs); color: var(--t-3); margin-right: auto; }
+.rd-form-msg.ok { color: var(--ok); }
+.rd-form-msg.err { color: var(--err); }
+.rd-muted { color: var(--t-3); font-size: var(--t-sm); }
+
+/* ── section header (sectionHead) ──────────────────────────────────── */
+.rd-sec-h {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-family: var(--f-mono); font-size: var(--t-xs); text-transform: uppercase;
+  letter-spacing: .07em; color: var(--t-2); margin-bottom: 10px;
+}
+.rd-sec-h > span:first-child { display: inline-flex; align-items: center; gap: 7px; }
+.rd-sec-r { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ── modal (openModal / confirm) ───────────────────────────────────── */
+/* .overlay-scrim (global) provides the fixed dark backdrop; .rd-scrim centers
+   the box on top of it. */
+.rd-scrim { display: grid; place-items: center; }
+.rd-modal {
+  background: var(--bg-1); border: 1px solid var(--line-3); border-radius: var(--r-4);
+  box-shadow: 0 0 0 1px var(--line-2), 0 30px 60px rgba(0, 0, 0, .45);
+  width: min(560px, 94vw); max-height: 88vh; display: flex; flex-direction: column;
+  overflow: hidden; animation: rd-modal-in .14s ease-out;
+}
+.rd-modal.sm { width: min(440px, 92vw); }
+.rd-modal.md { width: min(620px, 94vw); }
+.rd-modal.lg { width: min(880px, 95vw); }
+.rd-modal.full { width: min(1100px, 96vw); height: min(820px, 92vh); }
+@keyframes rd-modal-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.rd-modal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px var(--pad-x); border-bottom: 1px solid var(--line-2);
+}
+.rd-modal-ttl { font-family: var(--f-sans); font-size: var(--t-lg); font-weight: 600; color: var(--t-1); }
+.rd-modal-body { padding: var(--pad-x); overflow-y: auto; }
+.rd-modal-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: 12px var(--pad-x); border-top: 1px solid var(--line-2);
+}
+.rd-confirm-body { color: var(--t-2); font-size: var(--t-sm); line-height: 1.55; }

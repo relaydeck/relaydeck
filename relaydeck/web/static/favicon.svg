@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="relaydeck">
+  <!-- Paper tile + ink "rd" monogram with the terracotta accent dot.
+       Mono typeface (IBM Plex Mono) matches the dashboard brand; system
+       monospace fallback keeps the tab icon legible without a web font. -->
+  <rect width="64" height="64" rx="15" fill="#F4EEE0"/>
+  <text x="32" y="45" text-anchor="middle"
+        font-family="'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace"
+        font-weight="600" font-size="32" fill="#23262B"
+        >rd<tspan fill="#B7410E">.</tspan></text>
+</svg>

@@ -1,0 +1,102 @@
+/* theme.css — Appearance lens (theme gallery + token editor). All colors
+   route through design tokens so the editor themes itself. */
+
+/* ── sidebar gallery ──────────────────────────────────────────── */
+.ap-swatch {
+  width: 22px; height: 22px; border-radius: var(--r-2);
+  border: 1px solid var(--line-3); display: inline-flex;
+  align-items: flex-end; justify-content: flex-end; padding: 2px;
+  overflow: hidden; align-self: center;
+}
+.ap-swatch > span { width: 9px; height: 9px; border-radius: 50%; display: block; }
+.ap-row .right { display: flex; align-items: center; }
+.ap-active { color: var(--acc); font-size: 12px; }
+
+/* ── detail layout ────────────────────────────────────────────── */
+.ap-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+.ap-bar {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 18px;
+  padding: var(--pad-y) var(--pad-x);
+  border-bottom: 1px solid var(--line-2); background: var(--bg-1);
+}
+.ap-bar-grp { display: flex; flex-direction: column; gap: 4px; }
+.ap-bar-grp > label {
+  font-family: var(--f-mono); font-size: var(--t-xxs);
+  text-transform: uppercase; letter-spacing: .08em; color: var(--t-3);
+}
+.ap-bar-grp select {
+  background: var(--bg-2); color: var(--t-1); border: 1px solid var(--line-3);
+  border-radius: var(--r-2); padding: 5px 8px; font-family: var(--f-mono);
+  font-size: var(--t-sm); min-width: 150px;
+}
+.ap-seg { display: inline-flex; border: 1px solid var(--line-3); border-radius: var(--r-2); overflow: hidden; }
+.ap-seg button {
+  background: var(--bg-2); color: var(--t-2); border: 0; cursor: pointer;
+  padding: 5px 10px; font-family: var(--f-mono); font-size: var(--t-xs);
+  border-right: 1px solid var(--line-2);
+}
+.ap-seg button:last-child { border-right: 0; }
+.ap-seg button.on { background: var(--acc-soft); color: var(--acc); }
+.ap-bar-note {
+  flex: 1; min-width: 180px; text-align: right; align-self: center;
+  font-family: var(--f-mono); font-size: var(--t-xxs); color: var(--t-4);
+}
+
+/* ── editor ───────────────────────────────────────────────────── */
+.ap-edit { flex: 1; min-height: 0; overflow-y: auto; padding: var(--pad-x); }
+.ap-edit-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.ap-edit-title { display: flex; flex-direction: column; gap: 8px; min-width: 260px; flex: 1; }
+.ap-edit-title h2 { margin: 0; font-family: var(--f-sans); font-size: var(--t-xl); color: var(--t-1); font-weight: 600; }
+.ap-kind {
+  font-family: var(--f-mono); font-size: var(--t-xxs); color: var(--t-3);
+  border: 1px solid var(--line-3); border-radius: var(--r-1); padding: 1px 6px; vertical-align: middle;
+}
+.ap-meta-name, .ap-meta-desc {
+  background: var(--bg-2); color: var(--t-1); border: 1px solid var(--line-2);
+  border-radius: var(--r-2); padding: 6px 9px; font-family: var(--f-mono); font-size: var(--t-sm); width: 100%;
+}
+.ap-meta-ext { display: flex; align-items: center; gap: 8px; }
+.ap-meta-ext label { font-family: var(--f-mono); font-size: var(--t-xs); color: var(--t-3); }
+.ap-meta-ext select {
+  background: var(--bg-2); color: var(--t-1); border: 1px solid var(--line-3);
+  border-radius: var(--r-2); padding: 4px 8px; font-family: var(--f-mono); font-size: var(--t-sm);
+}
+.ap-edit-actions { display: flex; gap: 6px; align-items: center; }
+.ap-builtin-note {
+  margin: 12px 0 0; padding: 8px 12px; border: 1px solid var(--warn-soft);
+  background: var(--warn-soft); border-radius: var(--r-2);
+  font-family: var(--f-mono); font-size: var(--t-xs); color: var(--warn);
+}
+
+/* ── token grid ───────────────────────────────────────────────── */
+.ap-tokens { margin-top: 18px; display: flex; flex-direction: column; gap: 18px; }
+.ap-cat-h {
+  font-family: var(--f-mono); font-size: var(--t-xxs); text-transform: uppercase;
+  letter-spacing: .1em; color: var(--t-3); margin-bottom: 8px;
+  border-bottom: 1px solid var(--line-2); padding-bottom: 4px;
+}
+.ap-cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 8px; }
+.ap-tok {
+  display: grid; grid-template-columns: 120px auto 1fr 24px; align-items: center; gap: 6px;
+  padding: 4px 6px; border: 1px solid transparent; border-radius: var(--r-2);
+}
+.ap-tok.set { border-color: var(--acc-line); background: var(--acc-soft); }
+.ap-tok-label {
+  font-family: var(--f-mono); font-size: var(--t-xs); color: var(--t-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ap-tok-color {
+  width: 26px; height: 24px; padding: 0; border: 1px solid var(--line-3);
+  border-radius: var(--r-1); background: var(--bg-2); cursor: pointer;
+}
+.ap-tok-input {
+  background: var(--bg-2); color: var(--t-1); border: 1px solid var(--line-2);
+  border-radius: var(--r-1); padding: 4px 7px; font-family: var(--f-mono); font-size: var(--t-xs); min-width: 0;
+}
+.ap-tok-input::placeholder { color: var(--t-4); }
+.ap-tok-reset {
+  background: transparent; border: 0; color: var(--t-3); cursor: pointer;
+  font-size: var(--t-md); border-radius: var(--r-1); line-height: 1;
+}
+.ap-tok-reset:hover { color: var(--acc); background: var(--bg-3); }

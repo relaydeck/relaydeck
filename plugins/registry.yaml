@@ -1,0 +1,43 @@
+# relaydeck curated community plugin registry.
+#
+# This is the maintainer-curated "recommended list": a
+# catalog of THIRD-PARTY plugins that relaydeck recommends.
+# Community plugins are NOT vendored into this repo — only an entry here is
+# reviewed and merged. `relaydeck plugin search <term>` surfaces these first
+# (marked curated · recommended), and `relaydeck plugin install <name>`
+# resolves a name to its pinned package/git spec and records it in plugins.lock
+# at the `curated` trust tier.
+#
+# Governance: adding/updating an entry is a PR to this file (see AGENTS.md and
+# CONTRIBUTING.md). Pin a version range and, for git installs, a tag.
+# Optionally pin a sha256 of the published wheel/manifest for tamper-evidence.
+#
+# Entry schema:
+#   - name:        registry id used with `plugin install <name>`. MUST equal the
+#                  plugin's manifest `name` (the `name = ...` in its plugin.toml)
+#                  — the `curated` trust tier resolves by manifest name, so an
+#                  alias that differs would install as `local`, not `curated`.
+#     summary:     one-line description
+#     package:     PyPI package name (omit if git-only)
+#     version:     version constraint, e.g. ">=1.0,<2"   (PyPI installs)
+#     repo:        source URL (informational; required for git installs)
+#     git_ref:     tag/commit to pin (git installs)
+#     maintainer:  who owns it
+#     categories:  [tool | harness | provider | cognitive | infrastructure]
+#     sha256:      ADVISORY ONLY (not yet verified on install) — reserved for
+#                  tamper-evidence once hash verification is wired.
+#
+# Example (commented — no community plugins are curated yet):
+#
+# plugins:
+#   - name: acme-slack
+#     summary: "Route relaydeck escalations to Slack channels."
+#     package: relaydeck-plugin-acme-slack
+#     version: ">=1.0,<2"
+#     repo: https://github.com/acme/relaydeck-slack
+#     maintainer: acme
+#     categories: [tool]
+#     sha256: ""
+
+version: 1
+plugins: []

@@ -1,0 +1,9 @@
+[plugin]
+name = "ollama"
+version = "0.1.0"
+description = "Ollama local model catalog, completion, and embeddings backend"
+author = "relaydeck"
+license = "MIT"
+category = "provider"
+host_api_version = 1
+declared_capabilities = ["models.complete", "models.embed"]

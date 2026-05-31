@@ -1,0 +1,62 @@
+# Dockerfile.base — the foundation image for docker-tested buckets.
+#
+# Foundation image for tests/docker/. Supersedes tests/install/Dockerfile.ubuntu.
+# Layered design: every bucket variant builds FROM relaydeck-test:base + one
+# RUN line that adds harness CLIs or other deps. No source-code rebuilds for
+# variants — base already has relaydeck installed.
+#
+# CI build (reproducibility):
+#   docker build -f tests/docker/Dockerfile.base -t relaydeck-test:base .
+#   docker run --rm -e RELAYDECK_TEST_BUCKET=zero relaydeck-test:base \
+#     pytest -m docker tests/docker/
+#
+# Dev build (speed — bind-mount source, no rebuild for code-only changes):
+#   docker run --rm \
+#     -v "$PWD:/src:ro" -v "$PWD/tests:/work/tests:ro" \
+#     -e RELAYDECK_TEST_BUCKET=zero \
+#     relaydeck-test:base \
+#     bash -c "uv tool install --reinstall /src && pytest -m docker tests/docker/"
+
+FROM python:3.13-slim
+
+# Minimal system deps:
+# - curl, ca-certificates: TLS + driving the API in smokes
+# - git: the real installer pulls from git refs when RELAYDECK_SOURCE is unset
+# - nodejs, npm: harness CLI installs (pi, codex, opencode) layered on top
+# - python3 stays from the base image; it's what pytest + the API smokes use
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        curl ca-certificates git nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv — same tool scripts/install.sh bootstraps. Pre-install so the installer's
+# uv-bootstrap path is a no-op (we test the bootstrap path separately).
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Source goes to /src; tests run from /work so the repo isn't polluted by
+# pytest's cwd. Variant images mount /work or run pytest from /src/tests/docker.
+WORKDIR /src
+COPY . /src
+
+# Install relaydeck the same way an operator would. This pins THIS checkout
+# rather than reaching to github (which is private), and exercises the real
+# installer end-to-end.
+RUN RELAYDECK_SOURCE=/src bash scripts/install.sh
+
+# Test-time deps. `uv tool install` doesn't pull dev-group deps, so pytest
+# needs to be available system-wide for `pytest -m docker tests/docker/` to
+# run. Kept separate from relaydeck's own venv so reinstall during the dev
+# bind-mount path doesn't wipe them.
+RUN uv pip install --system pytest pytest-asyncio
+
+# Smoke scripts available under /usr/local/bin/. Tests shell out to these by
+# name from inside the container.
+RUN install -m 0755 scripts/install-smoke.sh /usr/local/bin/install-smoke.sh \
+ && install -m 0755 scripts/install-behavior.sh /usr/local/bin/install-behavior.sh
+
+# Default to a shell so `docker run --rm -it relaydeck-test:base` drops the
+# operator into an interactive shell. Tests override CMD explicitly with
+# `docker run ... relaydeck-test:base pytest ...`.
+WORKDIR /work
+CMD ["bash"]

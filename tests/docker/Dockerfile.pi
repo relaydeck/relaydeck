@@ -1,0 +1,27 @@
+# Dockerfile.pi — B2 (pi-only) variant image.
+#
+# `FROM relaydeck-test:base` + one `RUN npm install -g …` to layer pi on
+# top of the foundation image. Builds in ~10-20s on warm cache once the
+# base is built (`make test-docker-base`); ~30s cold. relaydeck-native
+# also rides on pi, so this image enables both `type: pi` and
+# `type: relaydeck` spawns.
+#
+#   docker build -f tests/docker/Dockerfile.pi -t relaydeck-test:pi .
+#   docker run -d --rm -p 8766:8765 --name rd-pi \
+#     -e RELAYDECK_TEST_BUCKET=pi-only \
+#     relaydeck-test:pi \
+#     bash -c "relaydeck daemon start --host 0.0.0.0 && tail -f /root/.relaydeck/daemon.log"
+#
+# Pinned npm version intentionally — keeps the image cache warm across
+# CI runs and isolates the build from upstream version churn. Bump when
+# upgrading the canonical pi version used in production.
+#
+# The package name matches the canonical used in production today
+# (`@mariozechner/pi-coding-agent`). Upstream has flagged a future
+# migration to `@earendil-works/pi-coding-agent`; both publish the same
+# versions for now. Update here + in relaydeck_native/pi_engine.py
+# (_PI_NPM_PACKAGE) together if/when the migration completes.
+
+FROM relaydeck-test:base
+
+RUN npm install -g @mariozechner/pi-coding-agent@0.73.1

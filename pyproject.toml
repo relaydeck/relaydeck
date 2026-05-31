@@ -1,0 +1,106 @@
+[project]
+name = "relaydeck"
+version = "0.1.0"
+description = "Local-first fleet OS for CLI coding agents — harness-native, plugin-extensible."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.1",
+    "cryptography>=42.0",
+    "fastapi>=0.136.1",
+    "python-multipart>=0.0.20",
+    "openai>=1.50",
+    "numpy>=2.0",
+    "pyyaml>=6.0.3",
+    "sentence-transformers>=4.1.0",
+    "uvicorn>=0.46.0",
+    "websockets>=13.0",
+    "rich>=13.0",
+    "pyte>=0.8",
+    "pydantic>=2.0",
+    "textual>=0.85",
+    "tomli>=2.0",
+    "tomli-w>=1.0",
+]
+
+[project.urls]
+Homepage = "https://relaydeck.ai"
+Repository = "https://github.com/relaydeck/relaydeck"
+Documentation = "https://relaydeck.ai"
+Issues = "https://github.com/relaydeck/relaydeck/issues"
+
+[project.optional-dependencies]
+# Bundled telegram gateway plugin. Pulled in via `pip install 'relaydeck[telegram]'`
+# or `uv tool install '.[telegram]'`. The plugin fails closed (with a
+# helpful hint) when PTB isn't importable, so the daemon stays up even
+# when the extra isn't installed.
+telegram = [
+    "python-telegram-bot>=21.0",
+]
+# Cron schedules for loop automations (`schedule: cron:...`). Soft dep:
+# interval + on_event schedules work without it; only `cron:` parsing
+# needs croniter, and the loop agent raises a helpful install hint when
+# it's missing. Pull in via `pip install 'relaydeck[cron]'`.
+cron = [
+    "croniter>=2.0",
+]
+
+[project.scripts]
+relaydeck = "relaydeck:main"
+rdk = "relaydeck:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# One bundled distribution: ships the `relaydeck` engine plus the root
+# `plugins` package (every relaydeck-managed plugin). Laid out so a future
+# split into a separately-versioned `relaydeck-plugins` wheel is mechanical.
+[tool.hatch.build.targets.wheel]
+packages = ["relaydeck", "plugins"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.1",
+    "ruff>=0.15.12",
+    # croniter is an optional runtime extra (the `cron` extra) for end
+    # users, but cron is a first-class Workers trigger so the default
+    # dev/CI environment installs it — otherwise the cron tests fail in a
+    # clean `uv sync --frozen` checkout.
+    "croniter>=2.0",
+    "python-multipart>=0.0.29",
+]
+# Browser-driven E2E (`pytest -m e2e tests/e2e/test_web_harness_e2e.py`).
+# Kept OUT of `dev` so the default `uv sync` stays lean — install with
+# `uv sync --group e2e` then `uv run playwright install chromium`. The
+# web e2e tests skip cleanly when playwright (or its browser) is absent.
+e2e = [
+    "playwright>=1.40",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# `e2e` is opt-in: the default run DESELECTS it (`-m "not e2e"` below) so a
+# plain `pytest` / `uv run pytest` stays fast and hermetic. The dedicated e2e
+# workflow opts back in with `pytest -m e2e` (a CLI `-m` overrides this one),
+# providing real harness binaries + a browser (`uv sync --group e2e` +
+# `playwright install chromium`) and any model auth the smoke tests need.
+addopts = ["-m", "not e2e and not docker"]
+markers = [
+    "e2e: end-to-end test that spawns a real harness binary (PTY or browser) and may call a real LLM (run with `-m e2e`)",
+    "docker: runs only inside a relaydeck-test:* container; deselected by default so a host `pytest` skips them",
+    "bucket: the permutation bucket(s) this test requires (gated by RELAYDECK_TEST_BUCKET env var, not by `-m`). Args are bucket names, e.g. @pytest.mark.bucket('zero', 'all')",
+    "tier: CLI-smoke tier — single int arg, 0 (--help), 1 (valid invocation), or 2 (stateful / destructive)",
+    "destructive: mutates the container's state irreversibly (cleanup required)",
+]

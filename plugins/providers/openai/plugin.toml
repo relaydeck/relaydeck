@@ -1,0 +1,10 @@
+[plugin]
+name = "openai"
+version = "0.1.0"
+description = "OpenAI model catalog and model gateway backend"
+author = "relaydeck"
+license = "MIT"
+category = "provider"
+host_api_version = 1
+declared_capabilities = ["models.complete", "models.embed"]
+needs_vault = ["OPENAI_API_KEY"]

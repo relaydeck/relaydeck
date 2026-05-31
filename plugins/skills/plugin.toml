@@ -1,0 +1,44 @@
+[plugin]
+name = "skills"
+version = "0.1.0"
+description = "Skill inventory + management: discover, validate, and materialize agent skills across workspaces and harnesses; read-only view of codex skills."
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+# Daemon-wide: the skills layer observes + materializes across ALL
+# workspaces, so it is not a per-workspace opt-in (don't put "skills"
+# in a workspace agent.toml — that's the unrelated user-skills harness
+# gate). This plugin is the generic consumer of `[plugin.skills]`.
+workspace_scoped = false
+
+# Capabilities the plugin exercises:
+#   events.subscribe — workspace + plugin lifecycle drive re-sync
+#   events.emit      — skills.changed / skills.invalid / skills.removed
+#   workers.spawn    — the periodic inventory rescan worker
+#   cli.register     — `relaydeck skills ...`
+#   api.register     — `/api/plugins/skills/...`
+declared_capabilities = [
+  "events.subscribe",
+  "events.emit",
+  "workers.spawn",
+  "cli.register",
+  "api.register",
+]
+
+[plugin.settings]
+scan_interval_seconds = { type = "number", default = 300.0, description = "Seconds between background skill inventory rescans (cache refresh + change events)." }
+include_codex = { type = "boolean", default = true, description = "Include ~/.codex/skills (+ .system) in the read-only inventory." }
+include_claude = { type = "boolean", default = true, description = "Include Claude Code skills (~/.claude/skills + per-workspace .claude/skills) in the read-only inventory." }
+inject_plugin_authoring_skill = { type = "boolean", default = true, description = "Materialize both bundled skills (relaydeck-fleet orientation + relaydeck-plugin-dev) into every workspace. Off → agents lose the fleet quick-reference and the plugin-authoring how-to." }
+
+[plugin.skills]
+relaydeck-fleet = "FLEET_SKILL.md"
+relaydeck-plugin-dev = "PLUGIN_AUTHORING_SKILL.md"
+
+[plugin.ui]
+# First-class rail lens when loaded — operators get a top-level view of
+# every skill, its source/health, and which agents will see it.
+tabs = [
+  { id = "skills", title = "Skills", icon = "bolt", module = "panel.js", order = 30, default_state = "lens" }
+]

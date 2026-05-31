@@ -1,0 +1,13 @@
+[plugin]
+name = "loop"
+version = "0.1.0"
+description = "Loop / cron agent type — ticks on schedule or reacts to events"
+author = "relaydeck"
+license = "MIT"
+category = "harness"
+host_api_version = 1
+# Two declared capabilities: the agent-type registrar and event
+# subscriptions for the on_event schedule mode. The loop agent
+# itself dispatches actions via the github actions module (which
+# uses its own gates internally).
+declared_capabilities = ["harnesses.register", "events.subscribe", "events.emit", "agents.send"]

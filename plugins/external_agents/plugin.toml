@@ -1,0 +1,30 @@
+[plugin]
+name = "external"
+version = "0.1.0"
+description = "Discover and observe external agent runtimes (Hermes, OpenClaw): detection, health, risk posture, and spawning their chat TUI into a workspace."
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+workspace_scoped = false
+
+# Detection/health are read-only. Spawning a linked runtime's chat TUI into
+# a workspace (opt-in, operator-initiated) registers it as a harness type
+# and creates+starts a relaydeck agent — hence the harness/agents/workspace
+# capabilities below.
+declared_capabilities = [
+  "events.emit",
+  "events.subscribe",
+  "api.register",
+  "cli.register",
+  "harnesses.register",
+  "agents.list",
+  "agents.create",
+  "agents.start",
+  "workspaces.read",
+]
+
+[plugin.ui]
+tabs = [
+  { id = "external", title = "External", icon = "eye", module = "panel.js", order = 46, default_state = "lens" }
+]

@@ -1,0 +1,50 @@
+[plugin]
+name = "github"
+version = "0.1.0"
+description = "Bundled GitHub integration: poll `gh` for events, route through rules to agents, scripts, and bus."
+author = "relaydeck"
+license = "MIT"
+category = "tool"
+host_api_version = 1
+# Daemon-wide, not per-workspace. Polling is configured by
+# `workspaces/<ws>/github.yaml` (a file the lens writes), not by
+# `agent.toml`'s plugins list — so the operator should NOT see github
+# in the per-workspace plugin toggles surface (it'd be a no-op toggle).
+# Same shape as telegram: a system service with per-workspace config.
+workspace_scoped = false
+
+# Capabilities the plugin exercises:
+#   events.subscribe — workspace.added/.updated/.removed for lifecycle
+#   events.emit      — `github.<event_type>` mirrors of inbound events
+#   workers.spawn    — one polling worker per opted-in workspace
+#   agents.list      — peer lookup for `agent.message` action
+#   agents.send      — `agent.message` action calls send_message_to
+#   cli.register     — `relaydeck github ...` subcommands
+declared_capabilities = [
+  "events.subscribe",
+  "events.emit",
+  "workers.spawn",
+  "agents.list",
+  "agents.send",
+  "agents.create",
+  "agents.start",
+  "tasks.read",
+  "tasks.write",
+  "workspaces.read",
+  "workspaces.create",
+  "cli.register",
+  "api.register",
+]
+
+[plugin.settings]
+poll_interval_seconds = { type = "number", default = 30.0, description = "Seconds between `gh api repos/{repo}/events` polls. Per-workspace override via github.yaml `poll_interval_s`." }
+gh_binary = { type = "string", default = "gh", description = "Path to the gh CLI binary. Default uses whatever is on PATH." }
+
+[plugin.ui]
+# A first-class lens (rail icon) when the plugin is loaded. The
+# dashboard reads `default_state = "lens"` and adds it to the activity
+# rail instead of treating it as a top-level tab (the new IA has no
+# top-level tabs — they were retired in the redesign).
+tabs = [
+  { id = "github", title = "GitHub", icon = "git", module = "panel.js", order = 42, default_state = "lens" }
+]

@@ -1,0 +1,25 @@
+[plugin]
+name = "metering"
+version = "0.1.0"
+description = "Token tracking and usage metering across model/provider combos"
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+workspace_scoped = false
+declared_capabilities = [
+  "events.subscribe",
+  "api.register",
+  "cli.register",
+  "ui.register",
+  "workers.spawn",
+]
+
+[plugin.ui]
+tabs = [
+  { id = "fleet", title = "Fleet", icon = "⊕", module = "fleet.js", order = 20 }
+]
+agent_tiles = [
+  { id = "tokens-24h", title = "Tokens · 24h", icon = "Σ", module = "tile_tokens.js", order = 30 },
+  { id = "cost-24h", title = "Cost · 24h", icon = "$", module = "tile_cost.js", order = 40 }
+]

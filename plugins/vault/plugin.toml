@@ -1,0 +1,24 @@
+[plugin]
+name = "vault"
+version = "0.1.0"
+description = "Secrets vault with key-name-only API and CLI management"
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+# Vault publishes well-known URLs under `/api/vault/...` that the
+# settings overlay and plugin's own panel call by absolute path. The
+# `top_level_api` flag keeps them stable across the SDK migration —
+# without it the URLs would shift to `/api/plugins/vault/...` and
+# the dashboard's vault tile would break silently.
+top_level_api = true
+# `vault.read` is intentionally NOT in declared_capabilities. The
+# vault PROVIDES that capability to other plugins; it doesn't consume
+# it itself (the plugin reads `_vault._values` directly). `vault.read`
+# is gated on the consuming plugin's manifest, not the provider's.
+declared_capabilities = ["api.register", "cli.register", "ui.register"]
+
+[plugin.ui]
+tabs = [
+  { id = "vault", title = "Vault", icon = "⚷", module = "vault.js", order = 40 }
+]

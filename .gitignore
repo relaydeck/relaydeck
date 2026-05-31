@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Test + lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Runtime data — relaydeck's runtime lives in ~/.relaydeck, but if someone
+# runs it with a relative config_home in this tree, keep it out of git
+runtime/
+*.db
+*.db-journal
+
+# Local secrets / operator config (never commit)
+.env
+.env.*
+!.env.example
+
+# Playwright MCP screenshot scratch (browser verification)
+.playwright-mcp/
+
+# Defensive: operator secret stores, tokens, and databases must never be
+# committed — even a stray relative ./.relaydeck config_home or a generated key.
+.relaydeck/
+vault.yaml
+vault.enc
+auth-token
+auth.json
+*.sqlite
+*.sqlite3
+*.pem
+*.key

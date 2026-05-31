@@ -1,0 +1,15 @@
+[plugin]
+name = "gateway"
+version = "0.1.0"
+description = "External webhook gateway"
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+# `top_level_api = true` opts this plugin out of the default
+# `/api/plugins/gateway/...` URL prefix. Required because external
+# systems (GitHub, Slack, …) post to stable public paths like
+# `/api/gateway/webhook/<channel>` — those URLs are configured outside
+# of relaydeck and can't shift when the plugin is rehoused.
+top_level_api = true
+declared_capabilities = ["api.register", "events.emit", "cli.register"]

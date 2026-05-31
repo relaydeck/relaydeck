@@ -1,0 +1,30 @@
+# Recommended bundles of OFFICIAL relaydeck plugins.
+#
+# Every official plugin ships in the single `relaydeck` wheel today, so a
+# bundle is a *recommended set* — the plugins `relaydeck doctor` expects to be
+# present and the dashboard surfaces as the default experience. This file is
+# also the pinned manifest of what an eventual split `relaydeck-plugins` wheel
+# (or per-plugin wheels) must provide, so the recommended set has one source of
+# truth that travels with the plugins.
+#
+# Names are plugin manifest names (the `name = ...` in each plugin.toml), which
+# is what discovery and the lockfile compare against.
+
+[bundle.default]
+description = "The full relaydeck experience — every official plugin."
+plugins = [
+  # Infrastructure (engine depends on these)
+  "vault", "github", "loop", "external",
+  # Harnesses
+  "pi-harness", "claude-code-harness", "codex-harness", "cursor-harness",
+  "opencode-harness", "antigravity-harness", "relaydeck-native",
+  # Extensions
+  "messaging", "skills", "theme", "metering", "telegram",
+  "gateway", "file-watcher", "usage-limits", "hitl", "prompts", "dashboard",
+  # Provider catalogs
+  "openai", "anthropic", "ollama", "openrouter",
+]
+
+[bundle.minimal]
+description = "Engine-essential only — one harness, secrets, and the operator."
+plugins = ["vault", "pi-harness", "relaydeck-native"]

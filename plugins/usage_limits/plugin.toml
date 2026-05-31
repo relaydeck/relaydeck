@@ -1,0 +1,43 @@
+[plugin]
+name = "usage-limits"
+version = "0.1.0"
+description = "Rolling-window quotas (session + weekly) with optional auto-pause when an agent exceeds its budget. Showcase plugin for the relaydeck SDK / PluginHost surface."
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+workspace_scoped = false
+# metering writes the usage_records table that we read out of. The
+# loader topologically sorts by `requires` (relaydeck/plugin.py:load_all),
+# so metering subscribes before us and has committed the row by the
+# time our usage.record handler runs. This is load-bearing: without
+# the dependency we'd see a stale read and undercount; the matching
+# regression test is test_no_double_count_under_normal_load_order in
+# tests/test_usage_limits.py.
+dependencies = ["metering"]
+declared_capabilities = [
+  "events.subscribe",
+  "events.emit",
+  "api.register",
+  "cli.register",
+  "ui.register",
+  "agents.list",
+  "agents.stop",
+  "metrics.register",
+]
+
+[plugin.settings]
+session_window_hours = { type = "number", default = 5.0, description = "Length of the rolling session window in hours." }
+session_token_budget = { type = "integer", default = 0, description = "Token budget for the session window (0 = unlimited)." }
+weekly_window_hours = { type = "number", default = 168.0, description = "Length of the rolling weekly window in hours." }
+weekly_token_budget = { type = "integer", default = 0, description = "Token budget for the weekly window (0 = unlimited)." }
+warn_threshold_pct = { type = "number", default = 75.0, description = "Emit a warn event when consumption crosses this percentage of the budget." }
+pause_at_limit = { type = "boolean", default = false, description = "If true, stop the agent when its budget is exceeded." }
+
+[plugin.ui]
+tabs = [
+  { id = "usage-limits", title = "Usage limits", icon = "⏳", module = "panel.js", order = 50 }
+]
+agent_tiles = [
+  { id = "usage-limits-tile", title = "Usage limits", module = "tile.js", order = 50 }
+]

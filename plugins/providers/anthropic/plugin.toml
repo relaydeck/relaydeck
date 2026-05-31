@@ -1,0 +1,10 @@
+[plugin]
+name = "anthropic"
+version = "0.1.0"
+description = "Anthropic model catalog and completion backend"
+author = "relaydeck"
+license = "MIT"
+category = "provider"
+host_api_version = 1
+declared_capabilities = ["models.complete"]
+needs_vault = ["ANTHROPIC_API_KEY"]

@@ -1,0 +1,42 @@
+# compose.yml — multi-bucket fixtures (Phase 4 will fill in sidecars).
+#
+# Phase 1 only wires the base/zero bucket. Later phases add:
+#   - ollama (B4): ollama/ollama:latest, OLLAMA_MODELS cache mount
+#   - github-mock (B6): small aiohttp service mimicking gh api events
+#   - telegram-mock (B3 + telegram tests): fakes BotAPI getMe/sendMessage
+#
+# Each service builds from tests/docker/Dockerfile.* and mounts /src + /work
+# for the dev-iteration path. `make test-docker-all` runs every service in
+# parallel; `make test-docker BUCKET=zero` runs one.
+
+services:
+
+  # B1 — zero. Fresh install, no harnesses, no providers, no external agents.
+  zero:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile.base
+      tags: ["relaydeck-test:base"]
+    image: relaydeck-test:base
+    environment:
+      RELAYDECK_TEST_BUCKET: zero
+    command:
+      - pytest
+      - -m
+      - docker
+      - --confcutdir=/src/tests/docker
+      - -c
+      - /src/pyproject.toml
+      - -o
+      - addopts=
+      - -p
+      - no:cacheprovider
+      - /src/tests/docker/
+      - -v
+
+  # Later phases add B2, B3, B4, B5, B6, B7, B8 services here. Each will be a
+  # `FROM relaydeck-test:base` Dockerfile variant under tests/docker/.
+
+# No volumes today. Phase 4 will add:
+#   volumes:
+#     ollama-models:    # host-cached so we don't re-pull on every CI run

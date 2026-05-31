@@ -1,0 +1,21 @@
+[plugin]
+name = "theme"
+version = "0.1.0"
+description = "Dashboard theme engine — ships the `relaydeck-theme` skill so any harness agent can author themes"
+author = "relaydeck"
+license = "MIT"
+category = "tool"
+host_api_version = 1
+# Daemon-wide: the theme engine itself (registry, API, CLI) lives in core
+# (relaydeck/themes.py + transports). This plugin's only job is to ship the
+# `relaydeck-theme` SKILL.md to workspaces so agents learn the `relaydeck theme` CLI.
+workspace_scoped = false
+declared_capabilities = [
+  "events.emit",
+]
+
+[plugin.settings]
+inject_skill = { type = "bool", default = true, description = "Materialize the `relaydeck-theme` skill into every workspace so agents can author themes." }
+
+[plugin.skills]
+relaydeck-theme = "SKILL.md"

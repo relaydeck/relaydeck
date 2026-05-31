@@ -1,0 +1,27 @@
+[plugin]
+name = "hitl"
+version = "0.1.0"
+description = "Human-in-the-loop: escalate to the operator when an agent needs human input (awaiting-input / error / explicit `relaydeck hitl ask`), via pluggable notification channels — and optionally stop the agent until a human responds."
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+workspace_scoped = false
+declared_capabilities = [
+  "events.subscribe",
+  "events.emit",
+  "api.register",
+  "cli.register",
+  "agents.list",
+  "agents.stop",
+]
+
+# Channels are decoupled via the `hitl.escalation` bus event: any plugin that
+# wants to be a notification "home" subscribes to it and delivers to its own
+# destination (telegram → admin DM, a future email plugin → admin inbox). The
+# web dashboard bell is always-on (the event is bridged to the SSE feed).
+[plugin.settings]
+enabled = { type = "bool", default = true, description = "Master switch for human-in-the-loop escalation." }
+escalate_on = { type = "enum", default = "both", options = ["both", "awaiting-input", "errors"], description = "Which signals trigger an escalation: agents pausing for input, agent errors, or both. (Explicit `relaydeck hitl ask` always escalates.)" }
+on_escalation = { type = "enum", default = "notify", options = ["notify", "notify_and_stop"], description = "notify = alert the operator and leave the agent running; notify_and_stop = also stop the agent process until a human restarts it." }
+cooldown_seconds = { type = "number", default = 300, description = "Suppress repeat escalations for the same agent within this many seconds." }

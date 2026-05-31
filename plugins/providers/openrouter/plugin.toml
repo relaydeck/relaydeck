@@ -1,0 +1,10 @@
+[plugin]
+name = "openrouter"
+version = "0.1.0"
+description = "OpenRouter model catalog and model gateway backend"
+author = "relaydeck"
+license = "MIT"
+category = "provider"
+host_api_version = 1
+declared_capabilities = ["models.complete", "models.embed"]
+needs_vault = ["OPENROUTER_API_KEY"]

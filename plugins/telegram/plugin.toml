@@ -1,0 +1,112 @@
+[plugin]
+name = "telegram"
+version = "0.1.0"
+description = "Telegram gateway: run multiple bots (connections), auto-discover chats/groups/channels into a global registry, and route them to workspace agents."
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+
+# Load AFTER the vault plugin: telegram reads its bot token from the vault at
+# on_load (host.vault.get → vault.get_secret → the vault plugin's module
+# state). Without this, telegram could load first, read an unset token, and
+# stay stubbed ("TELEGRAM_BOT_TOKEN unset") until a manual restart — even
+# though the token is on disk. The registry topo-sorts by `dependencies`.
+dependencies = ["vault"]
+
+# Daemon-wide (one bot per daemon process); per-chat routing handled
+# in ~/.relaydeck/telegram.yaml. NOT workspace-scoped — operators
+# don't toggle telegram per workspace via the workspace drawer.
+workspace_scoped = false
+
+# `relaydeck telegram ...` lives at the top level of the CLI (sibling of
+# `relaydeck agent`, `relaydeck workspace`), not nested under a `plugins`
+# subgroup. Matches `relaydeck github`.
+top_level_cli = true
+
+# Webhook ingress lives at /api/plugins/telegram/webhook, but it's
+# referenced verbatim by Telegram's setWebhook call so it can't shift
+# if the plugin is renamed. Today we keep it under the plugin prefix;
+# if we ever need a stable URL outside the prefix we'll flip
+# top_level_api and document the migration. Until then, the URL is
+# computed at runtime from host + plugin name, no contract change.
+top_level_api = false
+
+# Vault keys the plugin is allowed to read/write. Operators may add multiple
+# bot connections, whose generated token keys use TELEGRAM_BOT_TOKEN_<ID>.
+needs_vault = [
+  "TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_BOT_TOKEN_*",
+  "TELEGRAM_WEBHOOK_SECRET",
+]
+
+# Capabilities the plugin actually exercises:
+#   events.subscribe  — workspace.added/.updated/.removed for route validation;
+#                       agent.message for the outbound forwarder
+#   events.emit       — telegram.update / .message.routed / .message.unrouted
+#   workers.spawn     — one polling worker per daemon (PTB asyncio loop in a thread)
+#   agents.list       — peer lookup when resolving routes
+#   agents.send       — call orchestrator.send_message_to to deliver to agents
+#   api.register      — /api/plugins/telegram/{status,routes,test-route,webhook}
+#   cli.register      — `relaydeck telegram ...` subcommand tree
+#   vault.read        — read the bot token + webhook secret
+#   vault.write       — setup/connection routes persist tokens/secrets
+#   vault.delete      — removing the implicit default connection clears its token
+#   channels.register — register Telegram as a messaging channel so
+#                       interactive prompts render as inline keyboards
+#   prompts.read/write — resolve a prompt when a human taps a button
+declared_capabilities = [
+  "events.subscribe",
+  "events.emit",
+  "workers.spawn",
+  "agents.list",
+  "agents.send",
+  "agents.stop",
+  "api.register",
+  "cli.register",
+  "channels.register",
+  "prompts.read",
+  "prompts.write",
+  "vault.read",
+  "vault.write",
+  "vault.delete",
+]
+
+[plugin.settings]
+mode = { type = "enum", default = "polling", options = ["polling", "webhook"], description = "polling needs no public URL; webhook needs a reachable HTTPS endpoint." }
+bot_token_vault_key = { type = "string", default = "TELEGRAM_BOT_TOKEN", description = "Vault key for the bot API token. The plain token never round-trips to disk." }
+webhook_url = { type = "string", default = "", description = "Public HTTPS URL Telegram should POST updates to. Required when mode=webhook." }
+webhook_secret_vault_key = { type = "string", default = "TELEGRAM_WEBHOOK_SECRET", description = "Vault key for the X-Telegram-Bot-Api-Secret-Token header (validates inbound webhooks)." }
+require_mention_in_groups = { type = "bool", default = true, description = "Bot only responds to @mention or reply-to-bot messages in groups." }
+reactions = { type = "bool", default = true, description = "React with 👀 / ✅ / ❌ to routed messages." }
+typing_indicator = { type = "bool", default = true, description = "Show Telegram typing while a live agent is processing an inbound message. Stops when a reply is sent, the worker disconnects, or typing fails." }
+open_access = { type = "bool", default = false, description = "DANGER: bypass the user/group allowlists — the bot responds to ANYONE who messages it. Off by default (fail-closed). Turn on only for demos or intentionally public bots." }
+poll_timeout_s = { type = "number", default = 30.0, description = "Long-polling timeout (Telegram's getUpdates timeout parameter)." }
+hitl_admin_chat_id = { type = "text", default = "", description = "Telegram chat id that receives human-in-the-loop escalations (the 'operator home'). Empty = telegram isn't a HITL channel. The hitl plugin emits hitl.escalation; this is where it lands." }
+hitl_admin_connection = { type = "text", default = "", description = "Which bot connection delivers HITL escalations. Empty = the single/default connection." }
+
+# The plugin contributes itself as a top-level rail lens — operators
+# manage routes from the dashboard, not just CLI. The same panel is
+# registered for the agent-detail tile via `tiles` below.
+[plugin.ui]
+[[plugin.ui.tabs]]
+id = "telegram"
+title = "Telegram"
+icon = "send"
+module = "panel.js"
+order = 44
+default_state = "lens"
+
+[[plugin.ui.tiles]]
+id = "chats"
+title = "Telegram chats"
+icon = "send"
+module = "tile_chats.js"
+default_state = "pop"
+description = "Telegram chats and topics currently routed to this agent."
+
+# The relaydeck-telegram skill is materialized by the bundled `skills` plugin
+# into the workspaces a route currently targets (resolved via this
+# plugin's `skill_target_workspaces` hook).
+[plugin.skills]
+relaydeck-telegram = "SKILL.md"

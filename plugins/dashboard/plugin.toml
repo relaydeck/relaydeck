@@ -1,0 +1,21 @@
+[plugin]
+name = "dashboard"
+version = "0.1.0"
+description = "Live dashboard control — ships the `relaydeck-dashboard` skill so any harness agent can reshape the dashboard"
+author = "relaydeck"
+license = "MIT"
+category = "tool"
+host_api_version = 1
+# Daemon-wide: the control surface (validator, POST /api/dashboard/command,
+# `relaydeck dashboard` CLI) lives in core. This plugin's only job is to ship
+# the `relaydeck-dashboard` SKILL.md to workspaces so agents learn the CLI.
+workspace_scoped = false
+declared_capabilities = [
+  "events.emit",
+]
+
+[plugin.settings]
+inject_skill = { type = "bool", default = true, description = "Materialize the `relaydeck-dashboard` skill into every workspace so agents can reshape the dashboard." }
+
+[plugin.skills]
+relaydeck-dashboard = "SKILL.md"

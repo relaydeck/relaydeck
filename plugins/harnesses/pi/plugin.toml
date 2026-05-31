@@ -1,0 +1,17 @@
+[plugin]
+name = "pi-harness"
+version = "0.1.0"
+description = "Pi CLI harness"
+author = "relaydeck"
+license = "MIT"
+category = "harness"
+host_api_version = 1
+# Pi declares the `pi` + `pi-harness` agent types via the new
+# host.harnesses registrar. Plugin disable removes both names from
+# `known_agent_types()` immediately so `relaydeck agent create --type pi`
+# can't spawn an agent whose harness code isn't loaded.
+#
+# `agents.list` isn't used by the plugin itself today; kept on the
+# manifest because the harness is workspace-aware and the next
+# slice (peer discovery in identity preamble) will need it.
+declared_capabilities = ["harnesses.register", "agents.list"]

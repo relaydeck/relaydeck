@@ -1,0 +1,16 @@
+# Keep the install-test build context lean — only the source tree matters
+# (uv builds the wheel from pyproject). Excluding the venv/git/scratch dirs
+# keeps the build fast and reproducible.
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.playwright-mcp
+node_modules
+*.png
+.claude
+dist
+build
+*.egg-info

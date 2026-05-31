@@ -1,0 +1,9 @@
+[plugin]
+name = "file-watcher"
+version = "0.1.0"
+description = "Workspace file watcher worker and workspace file events"
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+declared_capabilities = ["events.subscribe", "events.emit", "workers.spawn"]

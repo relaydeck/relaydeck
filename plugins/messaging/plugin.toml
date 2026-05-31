@@ -1,0 +1,45 @@
+[plugin]
+name = "messaging"
+version = "0.1.0"
+description = "Agent-to-agent durable messaging, inbox CLI, and dashboard surfaces"
+author = "relaydeck"
+license = "MIT"
+category = "tool"
+host_api_version = 1
+workspace_scoped = true
+# `relaydeck message show <id>` is a top-level command (sibling of
+# `relaydeck workspace`), not nested under a `messaging` subgroup. Plus
+# `_register_cli` extends the existing `workspace` and `agent` groups
+# directly via the `extend_cli` escape hatch — the SDK declarative
+# `host.cli.command` API doesn't support attaching to pre-existing
+# groups, which is a limitation that's honest for this one plugin.
+top_level_cli = true
+# Honest capability set after SDK migration: events for workspace
+# lifecycle subscriptions, cli for the command surface. Everything
+# else (DB writes, message dispatch, the HTTP endpoints) lives in
+# core (`relaydeck/messages.py`, `relaydeck/orchestrator.py`,
+# `relaydeck/transports/api.py`) — the plugin's role is the user-facing
+# surface, not the data plane.
+declared_capabilities = [
+  "events.subscribe",
+  "events.emit",
+  "cli.register",
+]
+
+[plugin.settings]
+default_format = { type = "textarea", default = "[relaydeck from={from} id={id}] {body}", description = "Template applied when a message is pushed to a receiving agent PTY." }
+inject_skill = { type = "bool", default = true, description = "Inject the relaydeck-cli skill into workspaces that opt into messaging." }
+nudge_unanswered = { type = "bool", default = true, description = "Remind an agent (one gentle PTY line) when it goes idle still holding an unanswered peer message." }
+skill_content = { type = "textarea", default = "", description = "Optional override for runtime/skills/relaydeck-cli/SKILL.md." }
+
+[plugin.ui]
+# The Messages *lens* is core (always present when this plugin is loaded
+# in at least one workspace) — see CORE_LENSES in relaydeck/web/static/app.js.
+# The plugin contributes per-agent tiles instead:
+tiles = [
+  { id = "inbox",   title = "Inbox",   icon = "inbox", module = "tile_inbox.js",   default_state = "tab", description = "Peer-to-peer messages this agent has received." },
+  { id = "compose", title = "Compose", icon = "send",  module = "tile_compose.js", default_state = "tab", description = "Send a message to a peer agent in the workspace." },
+]
+
+[plugin.skills]
+relaydeck-cli = "SKILL.md"

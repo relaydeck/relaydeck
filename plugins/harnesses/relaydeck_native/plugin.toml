@@ -1,0 +1,24 @@
+[plugin]
+name = "relaydeck-native"
+version = "0.1.0"
+category = "harness"
+description = "relaydeck-native operator agent (type: relaydeck) — pi-backed with fleet extension tools and layered operator context."
+workspace_scoped = false
+declared_capabilities = [
+  "harnesses.register",
+  "api.register",
+]
+
+# The chat session renders in the core Terminal tab (customized pi PTY). This
+# plugin adds the Context + Calls tiles — shown ONLY on `relaydeck` agents.
+[plugin.ui]
+tiles = [
+  { id = "relaydeck-native:context", title = "Context", icon = "layers", module = "context.js", default_state = "tab", order = 2, applies_to = ["relaydeck"], description = "Exactly what relaydeck injected into the session: contract, soul, workspace, skills, policy." },
+  { id = "relaydeck-native:calls", title = "Calls", icon = "activity", module = "calls.js", default_state = "tab", order = 3, applies_to = ["relaydeck"], description = "Per-prompt LLM call log: prompt, response, tokens, latency." },
+]
+# Home-dashboard chat widget. `source = "core"` so it's always offered in
+# the gallery (the plugin is daemon-wide, not workspace-scoped). Pair it
+# with a relaydeck agent that has the `dashboard` tool to reshape the grid live.
+widgets = [
+  { id = "relaydeck-native:chat", title = "Native chat", icon = "send", module = "widget_chat.js", source = "core", def_w = 5, def_h = 5, min_w = 4, min_h = 3, description = "Chat with a relaydeck-native agent — and let it reshape this dashboard live." },
+]

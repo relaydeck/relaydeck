@@ -1,0 +1,9 @@
+[plugin]
+name = "claude-code-harness"
+version = "0.1.0"
+description = "Claude Code harness"
+author = "relaydeck"
+license = "MIT"
+category = "harness"
+host_api_version = 1
+declared_capabilities = ["harnesses.register", "agents.list"]

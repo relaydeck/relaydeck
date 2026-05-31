@@ -1,0 +1,64 @@
+[plugin]
+name = "prompts"
+version = "0.1.0"
+description = "Interactive prompts: agents ask a question with tap-able choices ([Approve] / [Reject]) instead of waiting for a typed 'YES'. Provider-agnostic — fanned out to Telegram/Discord/Slack/web; first human to pick wins. The structured decision is delivered back to the agent."
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+
+# Not workspace-scoped: the prompt store + web channel provider are
+# daemon-wide. A prompt names its own workspace; the dashboard and CLI
+# filter by it. Operators don't toggle prompts per workspace.
+workspace_scoped = false
+
+# Commands bundle under `relaydeck prompts ...` (ask/list/show/answer),
+# the same way telegram bundles under `relaydeck telegram`. No top-level
+# command is claimed, so top_level_cli stays off.
+
+# Capabilities:
+#   channels.register — register the built-in always-interactive `web`
+#                       channel provider (dashboard buttons; the zero-
+#                       config fallback so prompts work with no external
+#                       messaging integration at all)
+#   prompts.read/write — create/list/show/resolve prompts via host.prompts
+#   cli.register      — `relaydeck prompts ...`
+#   api.register      — /api/plugins/prompts/...
+#   agents.list       — validate the asking agent on create (best-effort)
+#   workers.spawn     — the expiry sweeper (expires overdue --expires prompts)
+declared_capabilities = [
+  "channels.register",
+  "prompts.read",
+  "prompts.write",
+  "cli.register",
+  "api.register",
+  "agents.list",
+  "workers.spawn",
+]
+
+[plugin.settings]
+default_expires_seconds = { type = "number", default = 0, description = "Default time-to-live for a prompt with no explicit --expires (0 = never expire)." }
+default_channels = { type = "text", default = "web", description = "Comma-separated default fan-out addresses when an agent doesn't pass --to (e.g. 'web,telegram:ops:123456')." }
+sweep_interval_seconds = { type = "number", default = 30, description = "How often the expiry sweeper checks for overdue prompts and resumes their askers with a timeout (0 = disable auto-expiry)." }
+
+# Approvals lens + an agent-detail tile listing that agent's open prompts.
+[plugin.ui]
+[[plugin.ui.tabs]]
+id = "approvals"
+title = "Approvals"
+icon = "check-circle"
+module = "tile_prompts.js"
+order = 46
+default_state = "lens"
+
+[[plugin.ui.tiles]]
+id = "prompts"
+title = "Approvals"
+icon = "check-circle"
+module = "tile_prompts.js"
+default_state = "pop"
+description = "Open interactive prompts (button approvals) for this agent."
+
+# Agent-facing skill: how to raise a prompt from inside a harness.
+[plugin.skills]
+relaydeck-prompts = "SKILL.md"

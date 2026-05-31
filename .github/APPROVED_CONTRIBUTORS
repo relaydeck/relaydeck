@@ -1,0 +1,19 @@
+# GitHub handles approved to bypass the contribution auto-close gate.
+#
+# Format: <username> <capability>
+#   issue   their future ISSUES stay open
+#   pr      their future ISSUES *and* PRs stay open
+#
+# Repository collaborators (write / maintain / admin) are ALWAYS exempt and do
+# not need to be listed here — the gate checks collaborator permission first.
+#
+# Default maintainers (pre-approved for issues + PRs):
+relaydeck pr
+#
+# Maintainers grant access to others by replying on an issue:
+#   `lgtmi`  -> adds the issue author with capability `issue`
+#   `lgtm`   -> adds the issue author with capability `pr`
+# The approve-contributor workflow appends the entry below automatically.
+#
+# One entry per line, e.g.:
+#   octocat pr

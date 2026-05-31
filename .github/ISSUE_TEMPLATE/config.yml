@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & ideas
+    url: https://github.com/relaydeck/relaydeck/discussions
+    about: Ask questions or float ideas in Discussions instead of opening an issue.
+  - name: Security report
+    url: https://github.com/relaydeck/relaydeck/security/advisories/new
+    about: Report a vulnerability privately (see SECURITY.md) — do not open a public issue.

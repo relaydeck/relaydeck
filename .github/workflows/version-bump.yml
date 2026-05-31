@@ -1,0 +1,60 @@
+name: version-bump
+
+# Manually bump the version and open a release PR. Respects branch protection
+# (no direct push to main): it pushes a branch and opens a PR for review/merge.
+# After merging, cut a GitHub Release with the matching tag — release.yml then
+# publishes to PyPI.
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: "Bump level (patch / minor / major) or an explicit X.Y.Z"
+        required: true
+        default: "patch"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Bump version
+        id: bump
+        run: |
+          set -euo pipefail
+          new="$(uv run python scripts/bump_version.py '${{ github.event.inputs.level }}')"
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Open release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          new="${{ steps.bump.outputs.version }}"
+          branch="release/v$new"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add pyproject.toml relaydeck/__init__.py CHANGELOG.md
+          git commit -m "release: v$new"
+          git push --set-upstream origin "$branch"
+          body="$(printf 'Automated version bump to **v%s**.\n\nAfter merge, publish a GitHub Release tagged `v%s` — `release.yml` builds and publishes to PyPI. See docs/RELEASE.md.' "$new" "$new")"
+          gh pr create \
+            --title "release: v$new" \
+            --body "$body" \
+            --base main \
+            --head "$branch"

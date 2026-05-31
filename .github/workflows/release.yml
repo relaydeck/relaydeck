@@ -1,0 +1,85 @@
+name: release
+
+# Publish relaydeck to PyPI when a GitHub Release is published. Publishing is
+# triggered BY the release, so the PyPI version and the GitHub Release tag are
+# always in lockstep — which is exactly what `relaydeck/version_check.py`
+# (latest-GitHub-Release tag) relies on to detect updates.
+#
+# Publishes to PyPI via Trusted Publishing (OIDC) on a published GitHub Release.
+# No API token is stored in the repo. See docs/RELEASE.md for the release flow.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build + twine check only; skip the PyPI upload"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build sdist + wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Verify tag matches package version
+        # On a real release the tag (vX.Y.Z) must equal pyproject's version, or
+        # the wheel would publish under a version nobody tagged.
+        if: github.event_name == 'release'
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(uv run python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          echo "tag=$tag  pyproject=$ver"
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::Release tag v$tag does not match pyproject version $ver. Bump the version first (see docs/RELEASE.md)."
+            exit 1
+          fi
+
+      - name: Build
+        run: uv build
+
+      - name: Check artifacts
+        run: uvx twine check dist/*
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Only publish for a real release (not the dry-run dispatch).
+    if: github.event_name == 'release'
+    environment:
+      name: pypi
+      url: https://pypi.org/project/relaydeck/
+    permissions:
+      id-token: write   # OIDC for PyPI Trusted Publishing
+    steps:
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1

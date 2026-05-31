@@ -1,0 +1,59 @@
+name: docker-fast
+
+# PR fast lane for Docker-based bucket tests. Phase 1 runs B1 (zero) only;
+# Phase 2 adds B2 (pi-only). Both buckets in parallel, ≤10 min budget.
+#
+# Supersedes the previous install.yml workflow (which only built the slim
+# install image and ran scripts/install-smoke.sh). B1 covers everything
+# install.yml did plus the doctor-honesty and degradation assertions.
+#
+# Nightly full-matrix coverage (B3 onward) lands in a separate docker-full
+# workflow in Phase 4.
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bucket:
+    name: docker / B${{ matrix.bucket }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # Phase 1: B1 (zero) only. Phase 2 appends:
+        #   - { bucket: 2, name: pi-only, image: pi, dockerfile: Dockerfile.pi }
+        include:
+          - bucket: 1
+            name: zero
+            image: base
+            dockerfile: Dockerfile.base
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build relaydeck-test:${{ matrix.image }}
+        run: |
+          docker build \
+            -f tests/docker/${{ matrix.dockerfile }} \
+            -t relaydeck-test:${{ matrix.image }} \
+            .
+
+      - name: Run docker tests (B${{ matrix.bucket }} / ${{ matrix.name }})
+        run: |
+          docker run --rm \
+            -e RELAYDECK_TEST_BUCKET=${{ matrix.name }} \
+            relaydeck-test:${{ matrix.image }} \
+            pytest -m docker --confcutdir=/src/tests/docker -c /src/pyproject.toml -o addopts= -p no:cacheprovider /src/tests/docker/ -v --junitxml=/tmp/junit.xml || RC=$?
+          exit ${RC:-0}
+
+      # If pytest fails, the JUnit XML and the daemon log are useful artifacts
+      # for diagnosis. Docker doesn't preserve files after `--rm` finishes,
+      # so the test must have written them to a host-mounted volume; Phase 1
+      # keeps the simple path and re-runs locally with `make test-docker` for
+      # failure triage. Phase 2 wires a proper /tmp/junit mount + upload-artifact.

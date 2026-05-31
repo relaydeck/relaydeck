@@ -1,0 +1,117 @@
+name: Approve Contributor
+
+# A maintainer comment of `lgtmi` (issues) or `lgtm` (issues + PRs) on an issue
+# adds that issue's author to .github/APPROVED_CONTRIBUTORS so the gates stop
+# auto-closing their submissions.
+#
+# Adapted, with thanks, from the pi project (earendil-works/pi).
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  approve:
+    if: ${{ !github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Update contributor approval
+        id: update
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
+            const VALID_CAPABILITIES = new Set(['issue', 'pr']);
+            const issueAuthor = context.payload.issue.user.login;
+            const commenter = context.payload.comment.user.login;
+            const body = (context.payload.comment.body || '').trim();
+
+            let target;
+            if (/\blgtmi\b/i.test(body)) target = 'issue';
+            else if (/\blgtm\b/i.test(body)) target = 'pr';
+            else { core.setOutput('status', 'skipped'); return; }
+
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner, repo: context.repo.repo, username: commenter,
+              });
+              if (!['admin', 'maintain', 'write'].includes(data.permission)) {
+                console.log(`${commenter} lacks write access`);
+                core.setOutput('status', 'skipped'); return;
+              }
+            } catch {
+              core.setOutput('status', 'skipped'); return;
+            }
+
+            function parse(content) {
+              const entries = [];
+              const users = new Map();
+              for (const line of content.split('\n')) {
+                const t = line.trim();
+                if (!t || t.startsWith('#')) { entries.push({ type: 'other', line }); continue; }
+                const parts = t.split(/\s+/);
+                if (parts.length !== 2 || !VALID_CAPABILITIES.has(parts[1].toLowerCase())) {
+                  entries.push({ type: 'other', line }); continue;
+                }
+                const entry = { type: 'user', username: parts[0], normalizedUser: parts[0].toLowerCase(), capability: parts[1].toLowerCase() };
+                entries.push(entry);
+                users.set(entry.normalizedUser, entry);
+              }
+              return { entries, users };
+            }
+
+            function stringify(entries) {
+              const out = [...entries];
+              while (out.length && out[out.length - 1].type === 'other' && out[out.length - 1].line.trim() === '') out.pop();
+              return out.map(e => e.type === 'user' ? `${e.username} ${e.capability}` : e.line).join('\n') + '\n';
+            }
+
+            const { entries, users } = parse(fs.readFileSync(APPROVED_FILE, 'utf8'));
+            const existing = users.get(issueAuthor.toLowerCase());
+            const existingCap = existing?.capability ?? null;
+
+            if (existingCap === 'pr' || existingCap === target) {
+              core.setOutput('status', 'already'); core.setOutput('capability', existingCap); return;
+            }
+            if (existing) existing.capability = target;
+            else entries.push({ type: 'user', username: issueAuthor, normalizedUser: issueAuthor.toLowerCase(), capability: target });
+
+            fs.writeFileSync(APPROVED_FILE, stringify(entries));
+            core.setOutput('status', existingCap ? 'updated' : 'added');
+            core.setOutput('capability', target);
+
+      - name: Commit and push
+        if: steps.update.outputs.status == 'added' || steps.update.outputs.status == 'updated'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/APPROVED_CONTRIBUTORS
+          git diff --staged --quiet || git commit -m "chore: approve contributor ${{ github.event.issue.user.login }}"
+          git push
+
+      - name: Comment on issue
+        if: steps.update.outputs.status != 'skipped'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const author = context.payload.issue.user.login;
+            const cap = '${{ steps.update.outputs.capability }}';
+            const status = '${{ steps.update.outputs.status }}';
+            let body;
+            if (status === 'already') body = `@${author} is already approved.`;
+            else if (cap === 'issue') body = `@${author} approved for issues — your future issues won't be auto-closed. PRs still need \`lgtm\`.`;
+            else body = `@${author} approved for issues and PRs — welcome, and thanks for contributing.`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, body,
+            });

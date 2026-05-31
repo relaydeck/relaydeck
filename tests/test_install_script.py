@@ -94,6 +94,15 @@ def test_install_script_uses_uv_tool_install():
     assert "uv tool install" in body
 
 
+def test_install_script_prefers_daemon_start_before_serve():
+    """Next-steps must recommend the background daemon before foreground
+    serve — serve dies with the terminal; daemon start is the default path."""
+    body = SCRIPT.read_text()
+    assert "relaydeck daemon start" in body
+    assert "relaydeck serve" in body
+    assert body.index("relaydeck daemon start") < body.index("relaydeck serve")
+
+
 def test_install_script_falls_back_to_git_when_pypi_unset():
     """Before PyPI exists (or during a brief outage), the default install
     must not hard-fail — it falls back to the GitHub main branch unless

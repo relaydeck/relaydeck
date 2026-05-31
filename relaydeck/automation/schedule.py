@@ -57,7 +57,8 @@ def parse_schedule(schedule: str) -> tuple[str, Any]:
             # broken/partial install — surface that rather than a bare traceback.
             raise ValueError(
                 "cron schedules need croniter, which ships with relaydeck — this "
-                "import failure points to a broken install; reinstall relaydeck."
+                "import failure points to a broken install; reinstall relaydeck "
+                "(e.g. `relaydeck update`, or `uv tool install --reinstall relaydeck`)."
             ) from exc
         if not value or not croniter.is_valid(value):
             raise ValueError(f"invalid cron expression: {value!r}")

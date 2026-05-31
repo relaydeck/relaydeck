@@ -384,6 +384,7 @@ def test_worker_require_ptb_raises_useful_error(monkeypatch):
     message = str(excinfo.value)
     assert "python-telegram-bot" in message
     assert "reinstall relaydeck" in message
+    assert "relaydeck update" in message
     # No longer advertise the optional extras — telegram ships in core.
     assert "relaydeck[telegram]" not in message
     assert "relaydeck-plugins[telegram]" not in message

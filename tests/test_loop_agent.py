@@ -92,6 +92,26 @@ class TestParseSchedule:
         with pytest.raises(ValueError, match="invalid cron expression"):
             parse_schedule("cron:not a cron")
 
+    def test_cron_import_failure_raises_useful_error(self, monkeypatch):
+        """croniter is a core dependency; an import failure means a broken
+        install. Surface reinstall guidance, not the old [cron] extra."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "croniter":
+                raise ImportError("simulated: croniter not installed")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        with pytest.raises(ValueError, match="broken install") as excinfo:
+            parse_schedule("cron:0 9 * * *")
+        message = str(excinfo.value)
+        assert "croniter" in message
+        assert "relaydeck update" in message
+        assert "relaydeck[cron]" not in message
+
     def test_unknown_kind_rejected(self):
         with pytest.raises(ValueError, match="unknown schedule kind"):
             parse_schedule("daily:1")

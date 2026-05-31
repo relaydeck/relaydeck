@@ -46,7 +46,8 @@ def require_ptb() -> Any:
         raise PTBNotAvailable(
             "python-telegram-bot failed to import. It ships with relaydeck as a "
             "core dependency, so this points to a broken or partial install — "
-            "reinstall relaydeck (e.g. `pip install --force-reinstall relaydeck`)."
+            "reinstall relaydeck (e.g. `relaydeck update`, or "
+            "`uv tool install --reinstall relaydeck`)."
         ) from exc
     return telegram
 

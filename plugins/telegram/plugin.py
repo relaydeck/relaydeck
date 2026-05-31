@@ -357,9 +357,10 @@ class TelegramPlugin(Plugin):
         # Skill materialization is owned by the bundled `skills` plugin,
         # which discovers this plugin's `relaydeck-telegram` skill via
         # `[plugin.skills]` and our `skill_target_workspaces` hook.
-        # PTB import + bot start is optional — when the extra isn't
-        # installed we keep the CLI/API surface usable so operators
-        # can manage the route table even before installing PTB.
+        # PTB ships with relaydeck, so bot start normally just works. We
+        # still fail closed if the import is somehow broken (partial
+        # install) — the CLI/API surface stays usable so operators can
+        # manage the route table and see the reason in status.
         self._maybe_start_worker()
 
     def on_unload(self) -> None:

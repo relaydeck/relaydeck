@@ -25,25 +25,28 @@ logger = logging.getLogger(__name__)
 
 
 class PTBNotAvailable(RuntimeError):  # noqa: N818 — "Error" suffix would shadow the helper name
-    """Raised when python-telegram-bot isn't installed.
+    """Raised when python-telegram-bot can't be imported.
 
-    The plugin fails closed (no worker spawned, status reports the
-    miss) rather than crashing the daemon. Operators see a clear
-    hint via `relaydeck telegram status`.
+    PTB is a core relaydeck dependency, so this only fires on a broken
+    or partial install. The plugin still fails closed (no worker
+    spawned, status reports the miss) rather than crashing the daemon,
+    so the CLI/API surface stays usable. Operators see the reason via
+    `relaydeck telegram status`.
     """
 
 
 def require_ptb() -> Any:
-    """Lazy-import PTB and surface a useful error when the extra
-    isn't installed. Returns the `telegram` module on success."""
+    """Lazy-import PTB so a broken install fails closed (a clear error
+    that keeps the daemon up) instead of taking down plugin loading.
+    Returns the `telegram` module on success."""
     try:
         import telegram  # noqa: F401 — surface ImportError clearly
         import telegram.ext  # noqa: F401
     except ImportError as exc:
         raise PTBNotAvailable(
-            "python-telegram-bot is not installed. "
-            "Install with `pip install 'relaydeck-plugins[telegram]'` for split installs, "
-            "or `pip install 'relaydeck[telegram]'` for the monorepo distribution."
+            "python-telegram-bot failed to import. It ships with relaydeck as a "
+            "core dependency, so this points to a broken or partial install — "
+            "reinstall relaydeck (e.g. `pip install --force-reinstall relaydeck`)."
         ) from exc
     return telegram
 
@@ -146,7 +149,7 @@ class TelegramWorker:
     # --- worker target (driven by relaydeck.workers) -------------------
 
     def run(self, worker: Any) -> None:
-        require_ptb()  # raises PTBNotAvailable if the extra isn't installed
+        require_ptb()  # raises PTBNotAvailable if PTB can't be imported (broken install)
         from telegram.ext import (
             Application,
             CallbackQueryHandler,

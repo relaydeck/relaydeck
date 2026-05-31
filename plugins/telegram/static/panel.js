@@ -369,9 +369,7 @@ export default class TelegramLens {
         <div class="tg-stub">
           <span>${s.stub_reason}</span>
           <span class="sp"></span>
-          ${/install|python-telegram-bot|ptb/i.test(s.stub_reason)
-            ? html`<code>uv sync --extra telegram</code><code>pip install 'relaydeck[telegram]'</code><code>pip install 'relaydeck-plugins[telegram]'</code>`
-            : (!this.settings?.has_bot_token ? html`<span style="font-size:var(--t-xs)">↓ paste your bot token below</span>` : nothing)}
+          ${!this.settings?.has_bot_token ? html`<span style="font-size:var(--t-xs)">↓ paste your bot token below</span>` : nothing}
         </div>` : nothing}`;
   }
 
@@ -496,7 +494,6 @@ export default class TelegramLens {
   }
 
   _runtimeBlockCard(reason) {
-    const dependency = /install|python-telegram-bot|ptb/i.test(reason || '');
     return html`
       <div class="tg-section full">
         <div class="head">
@@ -505,12 +502,6 @@ export default class TelegramLens {
         <div class="body">
           <div class="tg-block">
             <div class="msg">${reason || 'Telegram worker is not ready.'}</div>
-            ${dependency ? html`
-              <div class="cmds">
-                <code>uv sync --extra telegram</code>
-                <code>pip install 'relaydeck[telegram]'</code>
-                <code>pip install 'relaydeck-plugins[telegram]'</code>
-              </div>` : nothing}
             <div class="actions">
               <button class="btn primary" @click=${() => this._restart()}>Restart after fixing</button>
             </div>

@@ -75,7 +75,7 @@ const ACTION_TYPES = ['code', 'bus.emit', 'model', 'script', 'gh', 'agent.messag
 
 const HINTS = {
   interval: 'e.g. 30s · 5m · 2h — fires repeatedly on that interval',
-  cron: 'e.g. 0 9 * * 1-5 — standard 5-field cron (needs the cron extra)',
+  cron: 'e.g. 0 9 * * 1-5 — standard 5-field cron',
   on_event: 'e.g. agent.error · github.* — fires on a matching bus event',
 };
 

@@ -16,7 +16,10 @@
 #      (the same one-liner Astral itself recommends).
 #   3. Installs relaydeck as a `uv tool`, isolated in its own venv so
 #      it doesn't pollute the user's site-packages.
-#   4. Prints the next steps (`relaydeck serve`, `relaydeck doctor`).
+#   4. Prints the next steps — how to boot the daemon in the
+#      background (`relaydeck daemon start`, which survives the shell)
+#      vs the foreground (`relaydeck serve`), how to manage it
+#      (status/logs/stop), plus `doctor` and first-workspace setup.
 #
 # Idempotent — running this twice upgrades relaydeck in place rather
 # than failing on "already installed". Quiet on success, loud on
@@ -161,16 +164,36 @@ cat <<EOF
 
 ${BOLD}Done.${RESET}
 
-Next steps:
+${BOLD}Start the daemon${RESET} — the long-running process behind everything (your
+agents, the web dashboard, automations). It writes its state to ~/.relaydeck.
+Two ways to run it:
 
-  ${CYAN}relaydeck serve${RESET}            # boot the daemon (writes ~/.relaydeck)
-  ${CYAN}relaydeck doctor${RESET}           # check your setup
-  ${CYAN}relaydeck workspace add .${RESET}  # register the current dir as a workspace
+  ${CYAN}relaydeck daemon start${RESET}   ${DIM}# recommended — runs in the BACKGROUND${RESET}
+  ${CYAN}relaydeck serve${RESET}          ${DIM}# foreground — stops when this terminal closes${RESET}
 
-For the TUI:                ${CYAN}relaydeck view${RESET}
-For status of a single agent: ${CYAN}relaydeck agent status${RESET}
+${YELLOW}Prefer ${CYAN}relaydeck daemon start${RESET}${YELLOW}.${RESET} It detaches from your shell and keeps
+running after you close the terminal (or log out), so the dashboard and your
+agents stay up. ${CYAN}relaydeck serve${RESET} runs in the foreground and streams logs into
+this window — convenient for a quick look or debugging — but the daemon dies
+the instant you close the terminal or press Ctrl-C, taking the dashboard and
+every running agent down with it.
 
-Later, to upgrade:          ${CYAN}relaydeck update${RESET}  (or the dashboard's Update banner)
+Once it's up, open the dashboard at ${CYAN}http://127.0.0.1:8765${RESET}.
+
+${BOLD}Manage the background daemon:${RESET}
+
+  ${CYAN}relaydeck daemon status${RESET}  ${DIM}# is it running? show host / port / pid${RESET}
+  ${CYAN}relaydeck daemon logs${RESET}    ${DIM}# tail ~/.relaydeck/daemon.log${RESET}
+  ${CYAN}relaydeck daemon stop${RESET}    ${DIM}# shut it down${RESET}
+
+${BOLD}First moves:${RESET}
+
+  ${CYAN}relaydeck doctor${RESET}           ${DIM}# check your setup${RESET}
+  ${CYAN}relaydeck workspace add .${RESET}  ${DIM}# register the current dir as a workspace${RESET}
+  ${CYAN}relaydeck view${RESET}             ${DIM}# built-in TUI viewer for the whole fleet${RESET}
+  ${CYAN}relaydeck agent status${RESET}     ${DIM}# status of a single agent${RESET}
+
+Later, to upgrade: ${CYAN}relaydeck update${RESET}  ${DIM}(or the dashboard's Update banner)${RESET}
 
 Docs: ${DIM}https://relaydeck.ai${RESET}
 EOF

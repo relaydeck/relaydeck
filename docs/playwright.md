@@ -131,8 +131,8 @@ workspaces|appearance|skills|github|telegram|external), `?agent=<id>`,
 - Header actions: `[data-act="verify"]`, `[data-act="restart"]`. Setup card (no
   token yet): `.tg-setup [data-f="token"]` + `[data-act="save"]`.
 - Live add-bot e2e: `tests/e2e/test_web_telegram_e2e.py` — needs
-  `RELAYDECK_E2E_LIVE_DAEMON=1` (required when daemon already polls the bot) +
-  `uv sync --extra telegram` (PTB for polling). Full wiring:
+  `RELAYDECK_E2E_LIVE_DAEMON=1` (required when daemon already polls the bot).
+  PTB (python-telegram-bot) ships with relaydeck core, so no extra install. Full wiring:
   `test_telegram_full_live_wiring` — real getUpdates inbound + real sendMessage
   outbound; operator sends staged DMs when prompted. If the test looks stuck,
   your :8765 daemon is probably stealing getUpdates — use LIVE_DAEMON=1.

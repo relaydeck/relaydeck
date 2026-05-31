@@ -12,7 +12,7 @@ Operator env (never committed):
 
 Watch headed (recommended — uses your running daemon on :8765):
 
-    uv sync --group e2e --extra telegram
+    uv sync --group e2e
     uv run playwright install chromium
     RELAYDECK_E2E_LIVE_DAEMON=1 \\
       RELAYDECK_E2E_TELEGRAM_TOKEN='…' \\
@@ -85,10 +85,12 @@ def _telegram_user_id() -> int:
 
 
 def _require_ptb() -> None:
+    # PTB ships with relaydeck core, so this should never skip; it only
+    # guards against a broken/partial install in a live e2e environment.
     try:
         import telegram  # noqa: F401
     except ImportError:
-        pytest.skip("python-telegram-bot not installed — uv sync --extra telegram")
+        pytest.skip("python-telegram-bot failed to import — broken relaydeck install?")
 
 
 def _activity_rows(base: str) -> list[dict]:

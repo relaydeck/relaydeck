@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **python-telegram-bot** and **croniter** are now core dependencies — the
+  Telegram gateway and `schedule: cron:...` workers work on a plain
+  `pip install relaydeck` / `uv tool install relaydeck` with no extra step.
+  The `[telegram]` and `[cron]` extras remain as no-op aliases for backward
+  compatibility.
+- **`scripts/install.sh`** next-steps now recommend `relaydeck daemon start`
+  (background, survives terminal close) over `relaydeck serve` (foreground).
 
 ## [0.1.0] - 2026-05-31
 ### Added

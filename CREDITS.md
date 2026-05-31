@@ -63,8 +63,8 @@ The runtime and bundled plugins build on, among others:
 | NumPy | BSD-3-Clause |
 | sentence-transformers | Apache-2.0 |
 | python-multipart | Apache-2.0 |
-| python-telegram-bot *(optional)* | LGPL-3.0 |
-| croniter *(optional)* | MIT |
+| python-telegram-bot | LGPL-3.0 |
+| croniter | MIT |
 
 See each project's distribution for the authoritative license text. The full,
 resolved dependency tree (with versions) lives in `uv.lock`.

@@ -3238,8 +3238,8 @@ def create_app(config_home: Path | None = None) -> FastAPI:
     @app.get("/api/version")
     def version_info(force: bool = False):
         """`{current, latest, update_available, repo, checked_at}`. Compares the
-        installed version to the latest GitHub release tag (cached 6h, fail-open:
-        offline / no-releases → no update)."""
+        installed version to the latest GitHub release tag (cached ~1h, fail-open:
+        offline / no-releases → no update). Pass `force=true` to bypass cache."""
         from relaydeck import __version__ as cur
         from relaydeck.version_check import check_for_update
         try:

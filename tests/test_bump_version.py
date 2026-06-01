@@ -55,3 +55,27 @@ def test_bump_version_explicit(tmp_path):
     assert res.returncode == 0, res.stderr
     assert res.stdout.strip() == "0.2.5"
     assert 'version = "0.2.5"' in (root / "pyproject.toml").read_text()
+
+
+def test_bump_version_runs_uv_lock_when_present(tmp_path, monkeypatch):
+    import importlib.util
+    import subprocess
+    import sys
+
+    root = _tree(tmp_path)
+    (root / "uv.lock").write_text('version = "0.1.0"\n')
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    path = root / "scripts" / "bump_version.py"
+    spec = importlib.util.spec_from_file_location("bump_version_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(sys, "argv", ["bump_version.py", "patch"])
+    mod.main()
+    assert calls and calls[-1][:2] == ["uv", "lock"]

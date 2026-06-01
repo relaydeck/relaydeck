@@ -36,6 +36,9 @@ jobs:
       - name: Install project + dev deps
         run: uv sync --frozen
 
+      - name: Verify lockfile matches pyproject
+        run: uv lock --check
+
       - name: Run test suite
         # Single source of truth. Auth tests, durability tests, and
         # the usage-limits showcase plugin all live in tests/.

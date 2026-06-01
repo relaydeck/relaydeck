@@ -5,8 +5,8 @@ relaydeck publishes to PyPI, and every PyPI release is cut from a GitHub Release
 of the same tag (.github/workflows/release.yml + docs/RELEASE.md), so the two are
 always in lockstep — the repo's latest GitHub Release tag is a reliable "is there
 a newer version?" signal that matches what `uv tool upgrade relaydeck` would
-install. This module fetches the tag, compares, and CACHES the result (6h TTL) so
-the dashboard banner never blocks a page load or hammers the GitHub API.
+install. This module fetches the tag, compares, and CACHES the result (1h TTL by
+default) so the dashboard banner never blocks a page load or hammers the GitHub API.
 Everything is fail-open: offline, rate-limited, or no-releases-yet all resolve to
 "no update" rather than an error. The network call goes through an injectable
 `_fetch` seam for tests.
@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 GITHUB_REPO = "relaydeck/relaydeck"
-CACHE_TTL_S = 6 * 3600
+CACHE_TTL_S = 3600  # 1h — balance freshness vs GitHub API traffic
 _RELEASES_URL = "https://api.github.com/repos/{repo}/releases/latest"
 
 

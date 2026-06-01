@@ -2067,49 +2067,26 @@ def create_app(config_home: Path | None = None) -> FastAPI:
             wp = Path(entry.path).expanduser()
             git = wt.workspace_git_info(wp, config_home=home)
             changes = wt.git_status_lines(wp) if git.get("is_git") else []
-            gh_path = home / "workspaces" / name / "github.yaml"
-            github = {"configured": gh_path.is_file(), "repo": None}
-            if github["configured"]:
+            repo_root = git.get("repo_root")
+            repo_workspaces = (
+                wt.repo_workspace_rows(home, repo_root, current=name)
+                if repo_root else []
+            )
+            git_worktrees = []
+            if repo_root:
                 try:
-                    import yaml
-                    data = yaml.safe_load(gh_path.read_text(encoding="utf-8")) or {}
-                    if isinstance(data, dict):
-                        github["repo"] = data.get("repo")
+                    git_worktrees = wt.git_worktree_rows(
+                        Path(repo_root), config_home=home,
+                    )
                 except Exception:
-                    pass
-            from relaydeck.orchestrator import get_orchestrator
-            orch = get_orchestrator()
-            agents_here = []
-            if orch is not None:
-                for a in orch.list_agents():
-                    if a.get("workspace") == name:
-                        agents_here.append({
-                            "id": a.get("id"),
-                            "status": a.get("status"),
-                            "semantic_status": a.get("semantic_status"),
-                        })
-            running_here = sum(1 for a in agents_here if a.get("status") == "running")
-            sibs = git.get("sibling_workspaces") or []
-            parallel_hint = bool(
-                git.get("is_git")
-                and (
-                    running_here > 1
-                    or (git.get("kind") == "main" and len(sibs) > 0)
-                )
-            )
-            parallel_reason = (
-                "multi_agent" if running_here > 1
-                else "siblings" if sibs else None
-            )
+                    git_worktrees = []
             return {
                 "workspace": name,
                 "path": str(wp),
                 "git": git,
                 "changes": changes,
-                "github": github,
-                "agents": agents_here,
-                "parallel_hint": parallel_hint,
-                "parallel_reason": parallel_reason,
+                "repo_workspaces": repo_workspaces,
+                "git_worktrees": git_worktrees,
             }
 
         return await asyncio.to_thread(_build)

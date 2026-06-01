@@ -530,7 +530,9 @@ def test_api_workspace_git_detail(client, tmp_path):
     assert body["git"]["is_git"] is True
     assert body["git"]["branch"] is not None
     assert isinstance(body["changes"], list)
-    assert body["github"]["configured"] is False
+    assert isinstance(body["repo_workspaces"], list)
+    assert body["repo_workspaces"][0]["workspace"] == "detail-ws"
+    assert "untracked_files" in body["git"]
 
 
 def test_git_status_lines_reports_porcelain(tmp_path):
@@ -540,6 +542,15 @@ def test_git_status_lines_reports_porcelain(tmp_path):
     from relaydeck.worktrees import git_status_lines
     lines = git_status_lines(repo)
     assert any(ln["path"].endswith("newfile.txt") for ln in lines)
+
+
+def test_worktree_status_counts_untracked(tmp_path):
+    repo = _init_repo(tmp_path)
+    (repo / "fresh.txt").write_text("new\n")
+    from relaydeck.worktrees import worktree_status
+    st = worktree_status(repo)
+    assert st["untracked_files"] >= 1
+    assert st["dirty"] is True
 
 
 def test_is_git_repo(tmp_path):

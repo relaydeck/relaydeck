@@ -4969,7 +4969,9 @@ def update(check: bool):
                       "or re-run the relaydeck install script.")
         raise SystemExit(1)
 
-    cmd = os.environ.get("RELAYDECK_UPDATE_CMD", "uv tool upgrade relaydeck").split()
+    cmd = os.environ.get(
+        "RELAYDECK_UPDATE_CMD", "uv tool install --reinstall relaydeck",
+    ).split()
     console.print(f"[dim]$ {' '.join(cmd)}[/]")
     rc = subprocess.run(cmd).returncode
     if rc != 0:

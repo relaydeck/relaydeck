@@ -103,7 +103,7 @@ docker build -f tests/install/Dockerfile.ubuntu -t relaydeck-ubuntu . && docker 
 - `RELAYDECK_E2E_MESSAGING=1` — required to run `test_cross_harness_messaging_e2e` at all (it spawns real harnesses).
 - `RELAYDECK_E2E_LOGIN_OK=1` — include the browser-OAuth harnesses (claude, codex) in the messaging test; off by default → pi + opencode only.
 - `RELAYDECK_E2E_HEADED` / `RELAYDECK_E2E_SLOWMO` — headed viewing.
-- `RELAYDECK_UPDATE_CMD` — override the self-update command (so `POST /api/update` / `relaydeck update` is testable without a real `uv tool upgrade`).
+- `RELAYDECK_UPDATE_CMD` — override the self-update command (so `POST /api/update` / `relaydeck update` is testable without a real `uv tool install --reinstall relaydeck`).
 
 **What e2e asserts vs. what it doesn't:** the browser tests assert the *platform*
 contract relaydeck owns — workspace init, spawn → running, terminal mounts, PTY

@@ -2,7 +2,7 @@
 //
 // On boot the app fetches GET /api/version (current vs latest GitHub release,
 // cached server-side ~1h). When a newer release exists we show a thin dismissible
-// banner under the header. "Update now" runs POST /api/update (uv tool upgrade
+// banner under the header. "Update now" runs POST /api/update (uv tool reinstall
 // + daemon restart) behind a confirm that spells out the interruption — the
 // same responsibility bar as the daemon-restart modal — then polls /healthz
 // and reloads to pick up the new build.
@@ -114,13 +114,13 @@ function paintConfirm(host, info, modal, agentsLine, errMsg) {
       return;
     }
     paintUpdating(modal);
-    startRestartPoll();
+    startRestartPoll(modal);
   };
 
   modal.update(({ close }) => html`
     <div data-body style="color:var(--t-2);font-size:var(--t-sm);line-height:1.5">
       <div style="font-size:var(--t-sm);margin-bottom:10px">Upgrade <b>v${info.current}</b> → <b>v${info.latest}</b> and restart the daemon.</div>
-      <div class="upd-warn">Runs <code>uv tool upgrade relaydeck</code>, then restarts. This interrupts everything running:</div>
+      <div class="upd-warn">Runs <code>uv tool install --reinstall relaydeck</code>, then restarts. This interrupts everything running:</div>
       <ul style="margin:12px 0 0;padding-left:18px;font-size:var(--t-xs);color:var(--t-2);line-height:1.7">
         <li>${agentsLine}</li>
         <li>Live terminals + event streams disconnect and reconnect.</li>
@@ -146,7 +146,7 @@ function paintUpdating(modal) {
 // Wait for the upgrade+restart, then reload to load the new build. The window is
 // longer than a plain restart (the upgrade runs first), so be patient before
 // forcing a reload. Capped at POLL_MAX so a dead daemon can't loop forever.
-function startRestartPoll() {
+function startRestartPoll(modal) {
   let tries = 0;
   const poll = setInterval(async () => {
     tries++;
@@ -154,10 +154,15 @@ function startRestartPoll() {
       const hr = await fetch('/healthz', { cache: 'no-store' });
       if (hr.ok && tries > POLL_MIN_TRIES) {
         clearInterval(poll);
+        try { modal?.close?.(); } catch (_) {}
         setTimeout(() => location.reload(), 500);
         return;
       }
     } catch (_) { /* daemon down mid-restart — keep polling */ }
-    if (tries > POLL_MAX) { clearInterval(poll); location.reload(); }
+    if (tries > POLL_MAX) {
+      clearInterval(poll);
+      try { modal?.close?.(); } catch (_) {}
+      location.reload();
+    }
   }, 1000);
 }

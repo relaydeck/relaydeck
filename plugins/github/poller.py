@@ -25,9 +25,9 @@ Cursor structure:
     }
 
 `last_event_id` is the highest GitHub event id we've processed. Event
-ids are monotonically increasing strings (GitHub stops paginating
-before they wrap), so on each poll we filter to ids > last and walk
-oldest-first so rules fire in chronological order.
+ids are numeric strings, so on each poll we compare them numerically
+where possible and walk oldest-first so rules fire in chronological
+order.
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def fetch_events(
     repo: str,
     *,
     gh_binary: str = "gh",
-    per_page: int = 30,
+    per_page: int = 100,
     timeout: float = 30.0,
 ) -> PollResult:
     """Call `gh api repos/<repo>/events` and return a PollResult.
@@ -121,11 +121,9 @@ def fetch_events(
     "poll failed, status unknown". The previous version collapsed
     both into [], which made broken auth look healthy.
 
-    Pagination intentionally caps at one page. The Events API only
-    returns the last 90 days / 300 events / one page reliably, so
-    chasing pagination doesn't recover history we'd otherwise miss —
-    if the cursor falls behind by more than 300 events, the cursor
-    is broken regardless of pagination.
+    Pagination intentionally caps at one max-sized page. GitHub's
+    Events API exposes a bounded recent timeline, so this poller is for
+    near-real-time automation, not backfilling long gaps.
     """
     try:
         proc = subprocess.run(
@@ -304,7 +302,7 @@ class GithubPoller:
             ev_type = str(event.get("type") or "")
             self._emit_internal(ev_type, event)
             self._run_rules(config, event, worker)
-            if ev_id and (last_seen is None or ev_id > last_seen):
+            if _event_id_gt(ev_id, last_seen):
                 last_seen = ev_id
 
         self._save_cursor(error=None, advance_to=last_seen)
@@ -316,7 +314,7 @@ class GithubPoller:
         latest: str | None = None
         for e in events:
             eid = str(e.get("id") or "")
-            if eid and (latest is None or eid > latest):
+            if _event_id_gt(eid, latest):
                 latest = eid
         return latest
 
@@ -346,7 +344,7 @@ class GithubPoller:
         new = []
         for e in events:
             eid = str(e.get("id") or "")
-            if eid and eid > last_id:
+            if _event_id_gt(eid, last_id):
                 new.append(e)
         new.reverse()
         return new
@@ -445,3 +443,21 @@ class GithubPoller:
 def _now_iso() -> str:
     import datetime as dt
     return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _event_id_gt(event_id: str, last_id: str | None) -> bool:
+    """True when `event_id` is newer than `last_id`.
+
+    GitHub REST event ids are numeric strings. Lexicographic comparison
+    breaks across digit-length boundaries (`"10000" < "9999"`), so use
+    integer ordering when both sides are parseable and keep a string
+    fallback for defensive compatibility.
+    """
+    if not event_id:
+        return False
+    if last_id is None:
+        return True
+    try:
+        return int(event_id) > int(last_id)
+    except (TypeError, ValueError):
+        return str(event_id) > str(last_id)

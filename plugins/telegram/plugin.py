@@ -153,6 +153,27 @@ def _infer_parse_mode(body: str, fmt: str | None) -> str | None:
     return None
 
 
+def _bool_setting(host: Any, key: str, default: bool) -> bool:
+    """Read a boolean plugin setting without turning explicit False into True.
+
+    Settings can come from TOML/YAML, plugin defaults, or env vars; env values
+    arrive as strings, so normalize common false strings here.
+    """
+    try:
+        value = host.settings.get(key)
+    except Exception:
+        return default
+    if value is None:
+        return default
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("", "0", "false", "no", "off"):
+            return False
+        if v in ("1", "true", "yes", "on"):
+            return True
+    return bool(value)
+
+
 def _getme(token: str, timeout: float = 8.0) -> tuple[bool, str | None, int | None, str | None]:
     """Direct Bot API getMe — verifies a token without starting a poller.
     Safe in any process (getMe is not getUpdates, so no Conflict). Returns
@@ -442,14 +463,8 @@ class TelegramPlugin(Plugin):
         if self.workers:
             return
         host = self.host
-        try:
-            require_mention = bool(host.settings.get("require_mention_in_groups") or True)
-        except Exception:
-            require_mention = True
-        try:
-            reactions = bool(host.settings.get("reactions") or True)
-        except Exception:
-            reactions = True
+        require_mention = _bool_setting(host, "require_mention_in_groups", True)
+        reactions = _bool_setting(host, "reactions", True)
         try:
             poll_timeout_s = float(host.settings.get("poll_timeout_s") or 30.0)
         except Exception:
@@ -583,23 +598,22 @@ class TelegramPlugin(Plugin):
                 self._record_activity(ctx, "rejected_group")
                 return
 
-        # 2. Mention requirement (already applied to default; per-route
-        #    override happens after match).
-        if not is_private and not ctx["mention_ok"] and ctx["command"] is None:
-            logger.debug(
-                "telegram: group message without bot mention — ignored (chat_id=%s)",
-                chat_id,
-            )
-            self._record_activity(ctx, "rejected_mention")
-            return
-
-        # 3. Route lookup.
+        # 2. Route lookup. Mention gating happens after matching so
+        #    route-level `require_mention: false` can relax the global
+        #    group default for a specific chat/topic/command.
         command = ctx["command"]
         thread_id = ctx["thread_id"]
         matches = self.table.match_inbound(
             chat_id, connection=connection_id, thread_id=thread_id, command=command,
         )
         if not matches:
+            if not is_private and command is None and not ctx["mention_ok"]:
+                logger.debug(
+                    "telegram: group message without bot mention — ignored (chat_id=%s)",
+                    chat_id,
+                )
+                self._record_activity(ctx, "rejected_mention")
+                return
             host.events.emit("telegram.message.unrouted", {
                 "chat_id": chat_id, "thread_id": thread_id,
                 "command": command,
@@ -614,6 +628,26 @@ class TelegramPlugin(Plugin):
         #    chat_id-only level broadcast to all matching agents.
         top = matches[0].specificity()
         winners = [r for r in matches if r.specificity() == top]
+
+        def _mention_allowed(route: Any) -> bool:
+            if is_private or command is not None:
+                return True
+            if route.require_mention is False:
+                return True
+            if route.require_mention is True:
+                return bool(ctx.get("mentions_bot"))
+            return bool(ctx.get("mention_ok"))
+
+        winners = [r for r in winners if _mention_allowed(r)]
+        if not winners:
+            host.events.emit("telegram.message.unrouted", {
+                "chat_id": chat_id,
+                "thread_id": thread_id,
+                "command": command,
+                "reason": "matched routes but all gated by require_mention",
+            })
+            self._record_activity(ctx, "rejected_mention")
+            return
 
         body = (ctx["body"] or "").strip()
         if command and not body:
@@ -630,17 +664,6 @@ class TelegramPlugin(Plugin):
         sent_to: list[str] = []
         injected_live = False
         for route in winners:
-            # Per-route override of mention requirement. `False` is an
-            # explicit relax (route accepts any group message);
-            # `True` requires a mention for non-command messages.
-            if (
-                route.require_mention is True
-                and not is_private
-                and not ctx["mention_ok"]
-                and command is None
-            ):
-                continue
-
             # Header that the agent sees alongside the body. Format
             # mirrors the messaging plugin's "[relay from=… id=…]"
             # — the receiving agent's SKILL.md teaches reply via
@@ -672,9 +695,9 @@ class TelegramPlugin(Plugin):
             host.events.emit("telegram.message.unrouted", {
                 "chat_id": chat_id, "thread_id": thread_id,
                 "command": command,
-                "reason": "matched routes but all gated by per-route require_mention",
+                "reason": "matched routes but delivery failed",
             })
-            self._record_activity(ctx, "rejected_mention")
+            self._record_activity(ctx, "unrouted")
 
     def _send_to_route(
         self, route: Any, body: str, sender: str, ctx: dict[str, Any],
@@ -971,10 +994,7 @@ class TelegramPlugin(Plugin):
     def _typing_enabled(self) -> bool:
         if self.host is None:
             return True
-        try:
-            return bool(self.host.settings.get("typing_indicator", True))
-        except Exception:
-            return True
+        return _bool_setting(self.host, "typing_indicator", True)
 
     def _maybe_start_typing(self, ctx: dict[str, Any]) -> None:
         """Show Telegram 'typing…' only when a live agent PTY received the message."""
@@ -1016,7 +1036,13 @@ class TelegramPlugin(Plugin):
             bot = w.info() if w else None
             has_token = bool(self._resolve_token(conn))
             stub_reason = self._conn_stub.get(conn.id)
-            if bot is None and has_token and not stub_reason and _running_as_daemon():
+            if (
+                conn.enabled
+                and bot is None
+                and has_token
+                and not stub_reason
+                and _running_as_daemon()
+            ):
                 stub_reason = "worker not running — restart the bot or check the daemon log"
             resolved_name = conn.name
             if not resolved_name and bot and bot.get("bot_username"):
@@ -1062,10 +1088,7 @@ class TelegramPlugin(Plugin):
         Off by default — the safe fail-closed posture."""
         if self.host is None:
             return False
-        try:
-            return bool(self.host.settings.get("open_access") or False)
-        except Exception:
-            return False
+        return _bool_setting(self.host, "open_access", False)
 
     # ── Lifecycle cleanup (orphaned routes) ─────────────────────────
 
@@ -1137,6 +1160,8 @@ class TelegramPlugin(Plugin):
         before_users = set(self.table.allowed_users)
         before_groups = set(self.table.allowed_groups)
         for route in self.table.routes:
+            if route.direction not in ("in", "in+out"):
+                continue
             if route.chat_id is None:
                 continue
             if route.chat_id < 0:
@@ -2167,9 +2192,9 @@ class TelegramPlugin(Plugin):
             return {
                 "mode": sget("mode") or "polling",
                 "webhook_url": sget("webhook_url") or "",
-                "require_mention_in_groups": bool(sget("require_mention_in_groups") or True),
-                "reactions": bool(sget("reactions") or True),
-                "open_access": bool(sget("open_access") or False),
+                "require_mention_in_groups": _bool_setting(host, "require_mention_in_groups", True),
+                "reactions": _bool_setting(host, "reactions", True),
+                "open_access": _bool_setting(host, "open_access", False),
                 "poll_timeout_s": float(sget("poll_timeout_s") or 30.0),
                 "bot_token_vault_key": (
                     sget("bot_token_vault_key") or "TELEGRAM_BOT_TOKEN"

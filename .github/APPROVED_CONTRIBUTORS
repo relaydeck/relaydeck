@@ -13,7 +13,8 @@ relaydeck pr
 # Maintainers grant access to others by replying on an issue:
 #   `lgtmi`  -> adds the issue author with capability `issue`
 #   `lgtm`   -> adds the issue author with capability `pr`
-# The approve-contributor workflow appends the entry below automatically.
+# The approve-contributor workflow (relaydeck Contributor Gate app) appends
+# entries below automatically — see .github/CONTRIBUTOR_GATE_APP.md.
 #
 # One entry per line, e.g.:
 #   octocat pr

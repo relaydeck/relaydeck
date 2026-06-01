@@ -1,7 +1,7 @@
 // update_banner.js — "update available" banner + in-web Update-now flow.
 //
 // On boot the app fetches GET /api/version (current vs latest GitHub release,
-// cached server-side). When a newer release exists we show a thin dismissible
+// cached server-side ~1h). When a newer release exists we show a thin dismissible
 // banner under the header. "Update now" runs POST /api/update (uv tool upgrade
 // + daemon restart) behind a confirm that spells out the interruption — the
 // same responsibility bar as the daemon-restart modal — then polls /healthz

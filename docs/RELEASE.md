@@ -12,8 +12,9 @@ GitHub repo hardening.
    uv run python scripts/bump_version.py minor   # edits pyproject + __init__ + CHANGELOG
    ```
    Either way it updates `pyproject.toml`, the `_resolve_version()` fallback in
-   `relaydeck/__init__.py`, and rolls `CHANGELOG.md`'s `[Unreleased]` into a
-   dated section. The workflow opens a PR; review and **rebase-merge** it.
+   `relaydeck/__init__.py`, rolls `CHANGELOG.md`'s `[Unreleased]` into a dated
+   section, and runs `uv lock` so `uv.lock` matches the new workspace version.
+   The workflow opens a PR; review and **rebase-merge** it.
 2. **Cut a GitHub Release.** Create a release with tag `vX.Y.Z` (matching the
    new `pyproject` version) and paste the changelog notes.
 3. **PyPI publish is automatic.** `release.yml` triggers on the published
@@ -27,7 +28,11 @@ GitHub repo hardening.
 Because the PyPI upload is triggered *by* the GitHub Release, the PyPI version
 and the latest GitHub Release tag are always in lockstep — which is what the
 in-app update check (`relaydeck/version_check.py`, the dashboard banner, and
-`relaydeck update`) relies on to tell users a new version exists.
+`relaydeck update`) relies on to tell users a new version exists. The check
+compares the **installed** package version (`importlib.metadata`, fed by
+`pyproject.toml` at build time) to the latest GitHub Release tag; it does not
+read `uv.lock`. Results are cached on disk (~1h by default) so the dashboard
+does not call GitHub on every page load.
 
 ## Upgrade path (post-PyPI)
 

@@ -39,6 +39,9 @@ jobs:
           new="$(uv run python scripts/bump_version.py '${{ github.event.inputs.level }}')"
           echo "version=$new" >> "$GITHUB_OUTPUT"
 
+      - name: Verify lockfile
+        run: uv lock --check
+
       - name: Open release PR
         env:
           GH_TOKEN: ${{ github.token }}
@@ -49,7 +52,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          git add pyproject.toml relaydeck/__init__.py CHANGELOG.md
+          git add pyproject.toml relaydeck/__init__.py CHANGELOG.md uv.lock
           git commit -m "release: v$new"
           git push --set-upstream origin "$branch"
           body="$(printf 'Automated version bump to **v%s**.\n\nAfter merge, publish a GitHub Release tagged `v%s` — `release.yml` builds and publishes to PyPI. See docs/RELEASE.md.' "$new" "$new")"

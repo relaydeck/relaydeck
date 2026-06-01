@@ -8,6 +8,7 @@ literal and must agree for a clean release:
   1. pyproject.toml          [project] version  (feeds the wheel + metadata)
   2. relaydeck/__init__.py   the _resolve_version() fallback literal
   3. CHANGELOG.md            rolls [Unreleased] -> [X.Y.Z] - <today>
+  4. uv.lock                 workspace package version (via `uv lock`)
 
 Usage:
   uv run python scripts/bump_version.py patch        # 0.1.0 -> 0.1.1
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -31,6 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 INIT = ROOT / "relaydeck" / "__init__.py"
 CHANGELOG = ROOT / "CHANGELOG.md"
+UV_LOCK = ROOT / "uv.lock"
 
 
 def _read_version() -> str:
@@ -61,6 +64,25 @@ def _sub_once(path: Path, pattern: str, repl: str) -> None:
     path.write_text(new)
 
 
+def _refresh_lockfile() -> None:
+    """Re-sync uv.lock after a version bump (editable package entry)."""
+    if not UV_LOCK.is_file():
+        return
+    try:
+        subprocess.run(
+            ["uv", "lock"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        print("warn: uv not on PATH; run `uv lock` before merging", file=sys.stderr)
+    except subprocess.CalledProcessError as exc:
+        err = (exc.stderr or exc.stdout or str(exc)).strip()
+        print(f"warn: uv lock failed ({err}); run `uv lock` before merging", file=sys.stderr)
+
+
 def _roll_changelog(new: str) -> None:
     if not CHANGELOG.is_file():
         return
@@ -88,6 +110,7 @@ def main() -> None:
     _sub_once(PYPROJECT, r'^version\s*=\s*"[^"]+"', f'version = "{new}"')
     _sub_once(INIT, r'^    return "[^"]+"', f'    return "{new}"')
     _roll_changelog(new)
+    _refresh_lockfile()
 
     print(new)
 

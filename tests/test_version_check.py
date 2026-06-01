@@ -81,6 +81,10 @@ def test_check_for_update_fail_open_no_cache(tmp_path):
     assert out["latest"] is None and out["update_available"] is False
 
 
+def test_default_cache_ttl_is_one_hour():
+    assert vc.CACHE_TTL_S == 3600
+
+
 def test_ttl_expiry_refetches(tmp_path):
     cache = tmp_path / "c.json"
     cache.write_text(f'{{"latest": "0.1.0", "checked_at": {time.time() - 10}}}')

@@ -175,14 +175,14 @@ export class AgentsLens extends RelayLens {
       badge.className = `sbadge ${status}`;
       badge.textContent = status;
     }
-    const gitHost = pane.querySelector('[data-git-chips]');
-    if (gitHost) render(this._gitHeaderChips(agent), gitHost);
+    this._renderGitChips(pane.querySelector('[data-git-chips]'), agent);
     const ws = (this.host.state.workspaces || []).find((w) => w.name === agent.workspace);
     const nPlugins = ws ? (ws.plugins || []).length : 0;
     const plg = pane.querySelector('[data-plg-chip]');
     if (plg) {
       plg.style.display = nPlugins ? '' : 'none';
-      plg.textContent = `${nPlugins} plg`;
+      const meta = plg.querySelector('.dhdr-chip-meta');
+      if (meta) meta.textContent = String(nPlugins);
     }
   }
 
@@ -237,28 +237,38 @@ export class AgentsLens extends RelayLens {
   _gitHeaderChips(agent) {
     const ws = (this.host.state.workspaces || []).find((w) => w.name === agent.workspace);
     const git = ws?.git;
+    const pathTitle = ws?.path || '';
     if (!git?.is_git) {
-      return html`<span class="chip muted" title="Not a git repo">no git</span>`;
+      return html`
+        <span class="dhdr-chip-group dhdr-chip-group--git dim" title=${pathTitle}>
+          ${icon('git', 10)}
+          <span class="dhdr-chip-label">not a repo</span>
+        </span>`;
     }
-    const kind = git.kind === 'worktree'
-      ? html`<span class="chip accent" title="Worktree checkout">${icon('git', 10)} wt</span>`
-      : html`<span class="chip muted" title="Main checkout">${icon('git', 10)} main</span>`;
-    const branch = git.branch
-      ? html`<span class="chip muted" title="Branch" style="text-transform:none">${git.branch}</span>`
-      : nothing;
     const ins = git.insertions || 0;
     const dele = git.deletions || 0;
-    const plus = ins ? html`<span class="chip accent" title="Lines + vs HEAD">+${ins}</span>` : nothing;
-    const minus = dele ? html`<span class="chip warn" title="Lines − vs HEAD">-${dele}</span>` : nothing;
-    const neu = git.untracked_files
-      ? html`<span class="chip muted" title="Untracked files">${git.untracked_files} new</span>` : nothing;
-    const mod = git.modified_files
-      ? html`<span class="chip muted" title="Modified files">${git.modified_files} mod</span>` : nothing;
+    const deltas = [];
+    if (ins) deltas.push(html`<span class="dhdr-delta add">+${ins}</span>`);
+    if (dele) deltas.push(html`<span class="dhdr-delta del">−${dele}</span>`);
+    if (git.untracked_files) deltas.push(html`<span class="dhdr-delta neu">${git.untracked_files} new</span>`);
+    if (git.modified_files) deltas.push(html`<span class="dhdr-delta mod">${git.modified_files} mod</span>`);
+    if (git.added_files) deltas.push(html`<span class="dhdr-delta add">${git.added_files} add</span>`);
+    if (git.deleted_files) deltas.push(html`<span class="dhdr-delta del">${git.deleted_files} del</span>`);
     const sibs = (git.sibling_workspaces || []).length;
-    const sibChip = sibs
-      ? html`<span class="chip muted" title="${sibs} other workspace(s) on this repo">${sibs} tree${sibs === 1 ? '' : 's'}</span>`
-      : nothing;
-    return html`${kind}${branch}${plus}${minus}${neu}${mod}${sibChip}`;
+    return html`
+      <span class="dhdr-chip-group dhdr-chip-group--git ${git.kind === 'worktree' ? 'is-wt' : ''}" title=${pathTitle}>
+        ${icon('git', 10)}
+        <span class="dhdr-chip-kind">${git.kind === 'worktree' ? 'worktree' : 'main'}</span>
+        ${git.branch ? html`<span class="dhdr-chip-branch">${git.branch}</span>` : html`<span class="dhdr-chip-branch dim">—</span>`}
+        ${git.dirty ? html`<span class="dhdr-chip-dot dirty" title="dirty"></span>` : html`<span class="dhdr-chip-dot clean" title="clean"></span>`}
+        ${deltas.length ? html`<span class="dhdr-chip-deltas">${deltas}</span>` : nothing}
+        ${sibs ? html`<span class="dhdr-chip-meta">${sibs} tree${sibs === 1 ? '' : 's'}</span>` : nothing}
+      </span>`;
+  }
+
+  _renderGitChips(el, agent) {
+    if (!el || !agent) return;
+    render(this._gitHeaderChips(agent), el);
   }
 
   _renderAgentDetail(root, agent) {
@@ -284,12 +294,17 @@ export class AgentsLens extends RelayLens {
             <h1 class="dhdr-name truncate">${agent.id}</h1>
             <div class="dhdr-row dhdr-row--tight">
               <span class="sbadge ${status}">${status}</span>
-              <span class="chip accent" data-model-chip style="text-transform:none${modelRef ? '' : ';display:none'}"><span style="color:var(--t-3)">model</span>&nbsp;<span data-model-name>${modelRef}</span></span>
-              <span data-git-chips>${this._gitHeaderChips(agent)}</span>
-              ${nPlugins ? html`<span class="chip muted" data-plg-chip title="Plugins in @${agent.workspace || ''}" style="text-transform:none">${nPlugins} plg</span>`
-                : html`<span class="chip muted" data-plg-chip style="display:none">0 plg</span>`}
-              ${agent.purpose ? html`<span class="chip muted" style="text-transform:none;max-width:280px;overflow:hidden;text-overflow:ellipsis;display:inline-block" title=${agent.purpose}>${agent.purpose}</span>` : nothing}
+              <span class="dhdr-chip-group dhdr-chip-group--model" data-model-chip style="${modelRef ? '' : 'display:none'}">
+                <span class="dhdr-chip-label">model</span>
+                <span class="dhdr-chip-branch" data-model-name>${modelRef || '—'}</span>
+              </span>
+              <span class="dhdr-chip-group dhdr-chip-group--git" data-git-chips></span>
+              <span class="dhdr-chip-group dim" data-plg-chip style="${nPlugins ? '' : 'display:none'}">
+                <span class="dhdr-chip-label">plugins</span>
+                <span class="dhdr-chip-meta">${nPlugins}</span>
+              </span>
             </div>
+            ${agent.purpose ? html`<div class="dhdr-purpose" title=${agent.purpose}>${agent.purpose}</div>` : nothing}
           </div>
           <div class="dhdr-actions">
             ${isRunning
@@ -308,6 +323,7 @@ export class AgentsLens extends RelayLens {
     this._detailRoot.replaceChildren(pane);
 
     // Imperative population of the live/procedural regions (UNCHANGED logic).
+    this._renderGitChips(pane.querySelector('[data-git-chips]'), agent);
     this._renderStats(pane.querySelector('[data-stats]'), agent);
     if (agent.type === 'relaydeck') this._renderNativePiBanner(pane.querySelector('[data-native-pi-banner]'));
     this._renderSubtabs(pane.querySelector('[data-subtabs]'), agent);
@@ -361,9 +377,12 @@ export class AgentsLens extends RelayLens {
     const set = (k, v) => { const n = el.querySelector(`[data-c="${k}"]`); if (n) n.textContent = v; };
     const activeModel = s.model || agent.config?.preset || agent.config?.model || '';
     const pane = el.closest('.pane');
-    const chip = pane?.querySelector('[data-model-chip]');
+    const modelGrp = pane?.querySelector('[data-model-chip]');
     const nameEl = pane?.querySelector('[data-model-name]');
-    if (chip && nameEl && activeModel) { nameEl.textContent = activeModel; chip.style.display = ''; }
+    if (modelGrp && nameEl) {
+      if (activeModel) { nameEl.textContent = activeModel; modelGrp.style.display = ''; }
+      else { modelGrp.style.display = 'none'; }
+    }
     set('tokens', s.tokens_24h ? fmtNum(s.tokens_24h) : '0');
     set('tokens-sub', `${fmtNum(s.tokens_in || 0)} in · ${fmtNum(s.tokens_out || 0)} out`);
     set('cost', fmtCost(s.cost_24h || 0));

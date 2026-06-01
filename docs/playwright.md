@@ -22,6 +22,10 @@ relearning it. Referenced from `AGENTS.md`.
   daemon after editing JS/CSS** so the new pid busts the browser cache. `/` is
   served `no-store`. Verify served bytes with
   `curl -s "http://127.0.0.1:8765/static/<f>?v=$(cat ~/.relaydeck/daemon.pid)"`.
+- **Update banner layout**: when `.banner-host` has content, `.app` must be
+  `display:flex` (not a 3-row grid) and `.main` must stay tall (`flex:1`). If
+  `.main` collapses to ~26px the workspace is broken — inject a fake banner via
+  `browser_evaluate` and assert `document.querySelector('.main').getBoundingClientRect().height > 400`.
 
 ## Verify objectively (no eyes needed)
 - `browser_evaluate(() => {...})` — read computed styles / DOM state. Examples:

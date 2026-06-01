@@ -45,6 +45,15 @@ from relaydeck.orchestrator import get_orchestrator
 from relaydeck.web_runtime import web_static_dir
 
 
+def _operator_login_home() -> str:
+    """Login home for uv tool installs (not a relaydeck config HOME override)."""
+    try:
+        import pwd
+        return pwd.getpwuid(os.getuid()).pw_dir
+    except (ImportError, AttributeError, KeyError):
+        return os.environ.get("HOME") or os.path.expanduser("~")
+
+
 # ── Auth ─────────────────────────────────────────────────────────────
 #
 # Every HTTP route except the small public set below requires a Bearer
@@ -3251,8 +3260,8 @@ def create_app(config_home: Path | None = None) -> FastAPI:
 
     @app.post("/api/update")
     async def self_update(request: Request):
-        """Upgrade relaydeck in place (`uv tool upgrade`) then restart the
-        daemon — the web counterpart of `relaydeck update`. Like
+        """Upgrade relaydeck in place (`uv tool install --reinstall`) then
+        restart the daemon — the web counterpart of `relaydeck update`. Like
         /api/daemon/restart, this interrupts running agents/terminals; the UI
         confirms first. Refuses when the daemon is unmanaged (no PID file)."""
         import os
@@ -3281,14 +3290,21 @@ def create_app(config_home: Path | None = None) -> FastAPI:
             pass
 
         home_s = str(orch.config_home)
-        upgrade_cmd = os.environ.get("RELAYDECK_UPDATE_CMD", "uv tool upgrade relaydeck")
+        # `uv tool upgrade` no-ops when the tool was pinned (e.g. relaydeck==0.1.1);
+        # reinstall pulls the latest PyPI release like install.sh does.
+        upgrade_cmd = os.environ.get(
+            "RELAYDECK_UPDATE_CMD", "uv tool install --reinstall relaydeck",
+        )
+        upgrade_cmd_repr = repr(shlex.split(upgrade_cmd))
+        operator_home = _operator_login_home()
         # Detached helper: wait for our 200 to flush, run the upgrade, then
         # stop+start so the new code is loaded.
         helper = (
-            "import time, subprocess; from pathlib import Path; "
+            "import os, time, subprocess; from pathlib import Path; "
             "from relaydeck.daemon import stop_daemon, start_daemon; "
             "time.sleep(1.2); "
-            f"subprocess.run({shlex.split(upgrade_cmd)!r}, check=False); "
+            f"env = {{**os.environ, 'HOME': {operator_home!r}}}; "
+            f"subprocess.run({upgrade_cmd_repr}, check=False, env=env); "
             f"stop_daemon(Path({home_s!r}), timeout=8.0); "
             f"start_daemon(Path({home_s!r}), host={host!r}, "
             f"port={int(port)}, wait_seconds=12.0)"

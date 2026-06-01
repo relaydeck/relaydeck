@@ -4,7 +4,7 @@ release tag.
 relaydeck publishes to PyPI, and every PyPI release is cut from a GitHub Release
 of the same tag (.github/workflows/release.yml + docs/RELEASE.md), so the two are
 always in lockstep — the repo's latest GitHub Release tag is a reliable "is there
-a newer version?" signal that matches what `uv tool upgrade relaydeck` would
+a newer version?" signal that matches what `uv tool install --reinstall relaydeck` would
 install. This module fetches the tag, compares, and CACHES the result (1h TTL by
 default) so the dashboard banner never blocks a page load or hammers the GitHub API.
 Everything is fail-open: offline, rate-limited, or no-releases-yet all resolve to

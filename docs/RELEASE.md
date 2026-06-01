@@ -41,7 +41,7 @@ does not call GitHub on every page load.
   isn't reachable yet (e.g. before the first publish). Override with
   `RELAYDECK_SOURCE` for a pinned ref or a local checkout.
 - `relaydeck update` and the dashboard's "Update now" banner run
-  `uv tool upgrade relaydeck` (override with `RELAYDECK_UPDATE_CMD`), which moves
+  `uv tool install --reinstall relaydeck` (override with `RELAYDECK_UPDATE_CMD`), which moves
   a PyPI install to the latest published version.
 - Anyone still on an old `git+github` install can migrate with
   `uv tool install --reinstall relaydeck` (re-pins the source to PyPI), or just

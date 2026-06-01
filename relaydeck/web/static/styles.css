@@ -125,14 +125,18 @@ code, kbd { font-family: var(--f-mono); }
    App shell
    ──────────────────────────────────────────────────────────────────── */
 .app {
-  display: grid;
-  grid-template-rows: var(--hdr-h) 1fr var(--bar-h);
+  /* Flex (not a 3-row grid) so the optional update banner between header and
+  main doesn't steal the 1fr row and collapse the workspace to ~26px. */
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   background: var(--bg-0);
 }
+.banner-host { flex-shrink: 0; }
 .main {
   display: grid;
   grid-template-columns: 44px var(--side-w) 1fr;
+  flex: 1;
   min-height: 0;
   overflow: hidden;
 }
@@ -194,6 +198,8 @@ code, kbd { font-family: var(--f-mono); }
 /* HEADER */
 .hdr {
   display: flex; align-items: center; gap: 10px;
+  flex-shrink: 0;
+  height: var(--hdr-h);
   padding: 0 14px;
   border-bottom: 1px solid var(--line-1);
   background: var(--bg-1);
@@ -387,6 +393,7 @@ code, kbd { font-family: var(--f-mono); }
 /* STATUS BAR */
 .statusbar {
   display: flex; align-items: center;
+  flex-shrink: 0;
   height: var(--bar-h);
   padding: 0 12px;
   background: var(--bg-1);

@@ -1,6 +1,6 @@
 [project]
 name = "relaydeck"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local-first fleet OS for CLI coding agents — harness-native, plugin-extensible."
 readme = "README.md"
 license = "MIT"

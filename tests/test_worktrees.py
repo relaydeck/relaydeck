@@ -544,6 +544,58 @@ def test_git_status_lines_reports_porcelain(tmp_path):
     assert any(ln["path"].endswith("newfile.txt") for ln in lines)
 
 
+def test_parse_unified_diff():
+    from relaydeck.worktrees import _parse_unified_diff
+    raw = """diff --git a/foo.txt b/foo.txt
+index 111..222
+--- a/foo.txt
++++ b/foo.txt
+@@ -1,2 +1,3 @@
+ line1
+-line2
++line2 changed
++line3
+"""
+    out = _parse_unified_diff(raw)
+    assert len(out["hunks"]) == 1
+    kinds = [ln["kind"] for ln in out["hunks"][0]["lines"]]
+    assert "del" in kinds and "add" in kinds
+
+
+def test_git_diff_file_list_and_file_diff(tmp_path):
+    repo = _init_repo(tmp_path)
+    f = repo / "tracked.txt"
+    f.write_text("one\n")
+    subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init"], check=True, capture_output=True)
+    f.write_text("one\ntwo\n")
+    (repo / "new.txt").write_text("fresh\n")
+    from relaydeck.worktrees import git_diff_file_list, git_file_diff
+    files = git_diff_file_list(repo)
+    paths = {x["path"] for x in files}
+    assert "tracked.txt" in paths
+    assert "new.txt" in paths
+    diff = git_file_diff(repo, "tracked.txt")
+    assert diff["hunks"]
+    assert any(ln["kind"] == "add" for h in diff["hunks"] for ln in h["lines"])
+
+
+def test_api_workspace_git_diff(client, tmp_path):
+    c, _ = client
+    from relaydeck.config import register_workspace
+    repo = _init_repo(tmp_path)
+    register_workspace(tmp_path / ".relaydeck", "diff-ws", repo, [])
+    (repo / "a.txt").write_text("x\n")
+    subprocess.run(["git", "-C", str(repo), "add", "a.txt"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "c"], check=True, capture_output=True)
+    (repo / "a.txt").write_text("x\ny\n")
+    res = c.get("/api/workspaces/diff-ws/git-diff", params={"path": "a.txt"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["path"] == "a.txt"
+    assert body["hunks"]
+
+
 def test_worktree_status_counts_untracked(tmp_path):
     repo = _init_repo(tmp_path)
     (repo / "fresh.txt").write_text("new\n")

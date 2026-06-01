@@ -1,14 +1,9 @@
-// tiles/git.js — workspace git checkout, worktrees, branches, file changes.
+// tiles/git.js — workspace git checkout, worktrees, GitHub-style file diffs.
 
 import {
   RelayElement, defineTile, LiveController, EventsController, html, nothing, chip, icon, button,
 } from '@relaydeck/ui';
 import { live } from '../data.js';
-
-const CODE_CLASS = {
-  M: 'git-st-mod', A: 'git-st-add', D: 'git-st-del', R: 'git-st-ren',
-  C: 'git-st-ren', '?': 'git-st-untracked', U: 'git-st-conflict',
-};
 
 function fileChips(g) {
   if (!g?.is_git) return nothing;
@@ -24,11 +19,14 @@ function fileChips(g) {
   return parts.length ? html`${parts}` : html`<span class="chip ok">clean</span>`;
 }
 
+const ST_LABEL = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R', untracked: 'U' };
+
 class GitTile extends RelayElement {
   static properties = {
     agent: { attribute: false },
     host: { attribute: false },
     _view: { state: true },
+    _selectedFile: { state: true },
   };
 
   constructor() {
@@ -36,13 +34,18 @@ class GitTile extends RelayElement {
     this.agent = {};
     this.host = null;
     this._view = 'status';
+    this._selectedFile = null;
     this._detail = new LiveController(this);
+    this._fileDiff = new LiveController(this);
     this._bus = new EventsController(this, {
       onEvent: (e) => {
         const t = e?.type || '';
         if (!/^(workspace\.|worktree\.)/.test(t)) return;
         const ws = this.agent?.workspace;
-        if (ws) live.invalidate(`/api/workspaces/${encodeURIComponent(ws)}/git-detail`);
+        if (ws) {
+          live.invalidate(`/api/workspaces/${encodeURIComponent(ws)}/git-detail`);
+          live.invalidate(`/api/workspaces/${encodeURIComponent(ws)}/git-diff`);
+        }
       },
       rerender: false,
     });
@@ -52,7 +55,33 @@ class GitTile extends RelayElement {
     const ws = this.agent?.workspace;
     if (changed.has('agent') && ws) {
       this._detail.setKey(`/api/workspaces/${encodeURIComponent(ws)}/git-detail`);
+      this._selectedFile = null;
     }
+    const files = this._detail.value?.diff_files;
+    if (files?.length && this._view === 'changes') {
+      const paths = new Set(files.map((f) => f.path));
+      if (!this._selectedFile || !paths.has(this._selectedFile)) {
+        this._selectedFile = files[0].path;
+      }
+    }
+    if (changed.has('_selectedFile') || changed.has('_view') || changed.has('agent')) {
+      this._syncFileDiff();
+    }
+  }
+
+  _syncFileDiff() {
+    const ws = this.agent?.workspace;
+    if (!ws || this._view !== 'changes' || !this._selectedFile) {
+      this._fileDiff.setKey(null);
+      return;
+    }
+    const q = `/api/workspaces/${encodeURIComponent(ws)}/git-diff?path=${encodeURIComponent(this._selectedFile)}`;
+    this._fileDiff.setKey(q);
+  }
+
+  _pickFile(path) {
+    this._selectedFile = path;
+    this._syncFileDiff();
   }
 
   _wsRow(row) {
@@ -84,10 +113,7 @@ class GitTile extends RelayElement {
   _statusView(d) {
     const g = d.git || {};
     if (!g.is_git) {
-      return html`
-        <div class="git-pane">
-          <div class="git-callout">Not a git repository at <code>${d.path || '—'}</code>.</div>
-        </div>`;
+      return html`<div class="git-pane"><div class="git-callout">Not a git repository at <code>${d.path || '—'}</code>.</div></div>`;
     }
     const repoWs = d.repo_workspaces || [];
     const gitWts = d.git_worktrees || [];
@@ -99,53 +125,97 @@ class GitTile extends RelayElement {
             ${g.branch ? html`<span class="chip muted" style="text-transform:none">${icon('git', 10)} ${g.branch}</span>` : nothing}
             <span class="chip muted">${g.kind === 'worktree' ? 'worktree' : 'main checkout'}</span>
             ${fileChips(g)}
-            ${g.ahead ? html`<span class="chip muted">↑${g.ahead}</span>` : nothing}
-            ${g.behind ? html`<span class="chip muted">↓${g.behind}</span>` : nothing}
           </div>
           ${g.repo_root ? html`<div class="git-meta">Repo root: <code>${g.repo_root}</code></div>` : nothing}
         </div>
-
         ${repoWs.length ? html`
           <div class="git-section">
             <div class="git-section-k">Relaydeck workspaces on this repo</div>
             <table class="git-table">
-              <thead><tr>
-                <th>Workspace</th><th>Tree</th><th>Branch</th><th>Changes</th><th>Upstream</th><th>Agents</th>
-              </tr></thead>
+              <thead><tr><th>Workspace</th><th>Tree</th><th>Branch</th><th>Changes</th><th>Upstream</th><th>Agents</th></tr></thead>
               <tbody>${repoWs.map((row) => this._wsRow(row))}</tbody>
             </table>
           </div>` : nothing}
-
         ${gitWts.length ? html`
           <div class="git-section">
-            <div class="git-section-k">Git worktrees <span class="dim">(git worktree list)</span></div>
+            <div class="git-section-k">Git worktrees</div>
             <table class="git-table">
-              <thead><tr>
-                <th>Path</th><th>Workspace</th><th>Branch</th><th>HEAD</th>
-              </tr></thead>
+              <thead><tr><th>Path</th><th>Workspace</th><th>Branch</th><th>HEAD</th></tr></thead>
               <tbody>${gitWts.map((wt) => this._wtRow(wt))}</tbody>
             </table>
           </div>` : nothing}
-
-        <div class="git-foot dim">Parallel agents on the same repo typically use separate worktree workspaces (one branch per tree).</div>
       </div>`;
   }
 
+  _diffLine(line) {
+    const k = line.kind || 'ctx';
+    return html`<div class="gd-line gd-${k}"><span class="gd-gutter"></span><span class="gd-text">${line.text ?? ''}</span></div>`;
+  }
+
+  _diffHunk(hunk) {
+    return html`
+      <div class="gd-hunk">
+        <div class="gd-hunk-hdr">${hunk.header || ''}</div>
+        ${(hunk.lines || []).map((ln) => this._diffLine(ln))}
+      </div>`;
+  }
+
+  _diffPane() {
+    const diff = this._fileDiff.value;
+    if (!this._selectedFile) {
+      return html`<div class="gd-empty">Select a file to view its diff.</div>`;
+    }
+    if (this._fileDiff.key && diff === undefined) {
+      return html`<div class="gd-empty">Loading diff…</div>`;
+    }
+    if (!diff) {
+      return html`<div class="gd-empty">Diff unavailable.</div>`;
+    }
+    if (diff.binary) {
+      return html`<div class="gd-empty">Binary file — no text diff.</div>`;
+    }
+    if (diff.empty || !(diff.hunks || []).length) {
+      return html`<div class="gd-empty">No textual diff for this path.</div>`;
+    }
+    return html`
+      <div class="gd-view">
+        <div class="gd-file-hdr">
+          <span class="mono">${diff.path}</span>
+          ${diff.truncated ? html`<span class="dim">truncated</span>` : nothing}
+        </div>
+        ${(diff.hunks || []).map((h) => this._diffHunk(h))}
+      </div>`;
+  }
+
+  _fileBtn(f) {
+    const on = f.path === this._selectedFile;
+    const st = f.status || 'modified';
+    return html`
+      <button type="button" class="gd-file ${on ? 'on' : ''}" @click=${() => this._pickFile(f.path)}>
+        <span class="gd-st gd-st-${st}">${ST_LABEL[st] || '·'}</span>
+        <span class="gd-path" title=${f.path}>${f.path}</span>
+        <span class="gd-counts">
+          ${f.additions ? html`<span class="add">+${f.additions}</span>` : nothing}
+          ${f.deletions ? html`<span class="del">−${f.deletions}</span>` : nothing}
+        </span>
+      </button>`;
+  }
+
   _changesView(d) {
-    const lines = d.changes || [];
     if (!d.git?.is_git) {
       return html`<div class="git-pane"><div class="git-callout">No git checkout.</div></div>`;
     }
-    if (!lines.length) {
+    const files = d.diff_files || [];
+    if (!files.length) {
       return html`<div class="git-pane"><div class="git-callout ok">Working tree clean.</div></div>`;
     }
     return html`
-      <div class="git-log-wrap">
-        <div class="git-log-head">${lines.length} path(s) · git status --porcelain</div>
-        <div class="git-log">${lines.map((ln) => {
-          const cls = CODE_CLASS[ln.code?.[0]] || CODE_CLASS[ln.code] || 'git-st-other';
-          return html`<div class="git-log-line ${cls}"><span class="git-log-code">${ln.code}</span> ${ln.path}</div>`;
-        })}</div>
+      <div class="git-diff-layout">
+        <div class="git-diff-files">
+          <div class="git-diff-files-hdr">${files.length} changed</div>
+          ${files.map((f) => this._fileBtn(f))}
+        </div>
+        <div class="git-diff-main">${this._diffPane()}</div>
       </div>`;
   }
 
@@ -157,17 +227,20 @@ class GitTile extends RelayElement {
     if (!d) {
       return html`<div class="git-pane"><div class="git-loading">unavailable</div></div>`;
     }
-    const nChanges = (d.changes || []).length;
+    const nFiles = (d.diff_files || []).length;
     const ws = this.agent?.workspace || '';
     return html`
       <div class="git-tile">
         <div class="git-subtabs">
           <button class="git-sub ${this._view === 'status' ? 'on' : ''}" @click=${() => { this._view = 'status'; }}>Trees</button>
-          <button class="git-sub ${this._view === 'changes' ? 'on' : ''}" @click=${() => { this._view = 'changes'; }}>
-            Files${nChanges ? html` <span class="badge">${nChanges}</span>` : nothing}
+          <button class="git-sub ${this._view === 'changes' ? 'on' : ''}" @click=${() => { this._view = 'changes'; this._syncFileDiff(); }}>
+            Changes${nFiles ? html` <span class="badge">${nFiles}</span>` : nothing}
           </button>
           <span class="sp"></span>
-          <button class="btn sm" title="Refresh" @click=${() => live.invalidate(`/api/workspaces/${encodeURIComponent(ws)}/git-detail`)}>${icon('restart', 11)}</button>
+          <button class="btn sm" title="Refresh" @click=${() => {
+            live.invalidate(`/api/workspaces/${encodeURIComponent(ws)}/git-detail`);
+            live.invalidate(`/api/workspaces/${encodeURIComponent(ws)}/git-diff`);
+          }}>${icon('restart', 11)}</button>
         </div>
         ${this._view === 'changes' ? this._changesView(d) : this._statusView(d)}
       </div>`;

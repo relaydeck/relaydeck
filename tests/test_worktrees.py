@@ -517,6 +517,31 @@ def test_api_workspaces_include_git(client, tmp_path):
     assert row["git"]["kind"] == "main"
 
 
+def test_api_workspace_git_detail(client, tmp_path):
+    c, _ = client
+    from relaydeck.config import register_workspace
+    repo = _init_repo(tmp_path)
+    register_workspace(tmp_path / ".relaydeck", "detail-ws", repo, [])
+    (repo / "tracked.txt").write_text("hi\n")
+    res = c.get("/api/workspaces/detail-ws/git-detail")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["workspace"] == "detail-ws"
+    assert body["git"]["is_git"] is True
+    assert body["git"]["branch"] is not None
+    assert isinstance(body["changes"], list)
+    assert body["github"]["configured"] is False
+
+
+def test_git_status_lines_reports_porcelain(tmp_path):
+    repo = _init_repo(tmp_path)
+    f = repo / "newfile.txt"
+    f.write_text("x\n")
+    from relaydeck.worktrees import git_status_lines
+    lines = git_status_lines(repo)
+    assert any(ln["path"].endswith("newfile.txt") for ln in lines)
+
+
 def test_is_git_repo(tmp_path):
     repo = _init_repo(tmp_path)
     assert is_git_repo(repo) is True

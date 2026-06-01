@@ -2050,6 +2050,70 @@ def create_app(config_home: Path | None = None) -> FastAPI:
 
         return await asyncio.to_thread(_build)
 
+    @app.get("/api/workspaces/{name}/git-detail")
+    async def workspace_git_detail(name: str):
+        """Git checkout + file-level status for the agent-detail Git tile."""
+        import asyncio
+
+        from relaydeck import worktrees as wt
+        from relaydeck.config import load_workspace_registry
+
+        registry = load_workspace_registry(home)
+        entry = next((w for w in registry if w.name == name), None)
+        if entry is None:
+            raise HTTPException(404, f"no such workspace: {name}")
+
+        def _build():
+            wp = Path(entry.path).expanduser()
+            git = wt.workspace_git_info(wp, config_home=home)
+            changes = wt.git_status_lines(wp) if git.get("is_git") else []
+            gh_path = home / "workspaces" / name / "github.yaml"
+            github = {"configured": gh_path.is_file(), "repo": None}
+            if github["configured"]:
+                try:
+                    import yaml
+                    data = yaml.safe_load(gh_path.read_text(encoding="utf-8")) or {}
+                    if isinstance(data, dict):
+                        github["repo"] = data.get("repo")
+                except Exception:
+                    pass
+            from relaydeck.orchestrator import get_orchestrator
+            orch = get_orchestrator()
+            agents_here = []
+            if orch is not None:
+                for a in orch.list_agents():
+                    if a.get("workspace") == name:
+                        agents_here.append({
+                            "id": a.get("id"),
+                            "status": a.get("status"),
+                            "semantic_status": a.get("semantic_status"),
+                        })
+            running_here = sum(1 for a in agents_here if a.get("status") == "running")
+            sibs = git.get("sibling_workspaces") or []
+            parallel_hint = bool(
+                git.get("is_git")
+                and (
+                    running_here > 1
+                    or (git.get("kind") == "main" and len(sibs) > 0)
+                )
+            )
+            parallel_reason = (
+                "multi_agent" if running_here > 1
+                else "siblings" if sibs else None
+            )
+            return {
+                "workspace": name,
+                "path": str(wp),
+                "git": git,
+                "changes": changes,
+                "github": github,
+                "agents": agents_here,
+                "parallel_hint": parallel_hint,
+                "parallel_reason": parallel_reason,
+            }
+
+        return await asyncio.to_thread(_build)
+
     @app.get("/api/workspace-plugins")
     async def list_workspace_plugin_catalog():
         """Canonical catalog of names that can appear in a workspace's

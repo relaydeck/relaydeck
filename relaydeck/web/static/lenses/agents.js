@@ -56,7 +56,7 @@ function _statCellHTML(id, running) {
     case 'tick':
       return `<div class="stat-cell"><div class="k">Last tick</div><div class="v" data-c="tick">—</div><div class="sub" data-c="tick-sub">${running ? 'live' : '—'}</div></div>`;
     case 'activity':
-      return `<div class="stat-cell"><div class="k">Activity</div><div data-c="spark" style="height:28px"></div><div class="sub">30 min</div></div>`;
+      return `<div class="stat-cell"><div class="k">Activity</div><div data-c="spark" style="height:18px"></div><div class="sub">30m</div></div>`;
     default:
       return '';
   }
@@ -201,6 +201,28 @@ export class AgentsLens extends RelayLens {
     this._home.mount(root);
   }
 
+  _gitHeaderChips(agent) {
+    const ws = (this.host.state.workspaces || []).find((w) => w.name === agent.workspace);
+    const git = ws?.git;
+    if (!git?.is_git) {
+      return html`<span class="chip muted" title="Workspace path is not a git repo">no git</span>`;
+    }
+    const ins = git.insertions || 0;
+    const dele = git.deletions || 0;
+    const diff = (ins || dele) ? html`<span class="chip ${git.dirty ? 'warn' : 'muted'}" title="Line churn vs HEAD">+${ins}/-${dele}</span>` : nothing;
+    const kind = git.kind === 'worktree'
+      ? html`<span class="chip accent" title="Linked git worktree — isolated branch checkout">${icon('git', 10)} worktree</span>`
+      : html`<span class="chip muted" title="Main repo checkout">${icon('git', 10)} main</span>`;
+    const branch = git.branch
+      ? html`<span class="chip muted" title="Current branch" style="text-transform:none">${git.branch}${git.dirty ? ' •' : ''}</span>`
+      : nothing;
+    const sibs = (git.sibling_workspaces || []).length;
+    const sibChip = sibs
+      ? html`<span class="chip muted" title="${sibs} other workspace(s) on this repo — use worktrees for parallel branches">${sibs} sibling${sibs === 1 ? '' : 's'}</span>`
+      : nothing;
+    return html`${kind}${branch}${diff}${sibChip}`;
+  }
+
   _renderAgentDetail(root, agent) {
     const status = visualStatus(agent);
     const isRunning = agent.status === 'running';
@@ -210,23 +232,24 @@ export class AgentsLens extends RelayLens {
     // Fresh pane each render (parity with the old innerHTML rebuild) → lit
     // renders into a clean node, no stale-part contention with the fleet view.
     const pane = document.createElement('div');
-    pane.className = 'pane';
+    pane.className = 'pane pane--agent';
     render(html`
-      <div class="dhdr">
+      <div class="dhdr dhdr--compact">
         <div class="dhdr-top">
-          <div class="dhdr-avatar dhdr-brand ${status === 'running' || status === 'working' ? 'running' : ''}">
-            ${unsafeHTML(agentMark(agent, { size: 56, radius: 12 }))}
+          <div class="dhdr-avatar dhdr-brand dhdr-avatar--sm ${status === 'running' || status === 'working' ? 'running' : ''}">
+            ${unsafeHTML(agentMark(agent, { size: 40, radius: 10 }))}
             <span class="ind ${status}"></span>
           </div>
           <div class="dhdr-meta">
             <div class="dhdr-eyebrow"><button class="dhdr-back" data-act="home" title="Back to the fleet dashboard"
-              @click=${() => this.host.goHome()}>${icon('home', 10)} fleet</button> · ${agent.type || 'agent'} agent · @${agent.workspace || ''}</div>
+              @click=${() => this.host.goHome()}>${icon('home', 10)} fleet</button> · ${agent.type || 'agent'} · @${agent.workspace || ''}</div>
             <h1 class="dhdr-name truncate">${agent.id}</h1>
-            <div class="dhdr-row">
+            <div class="dhdr-row dhdr-row--tight">
               <span class="sbadge ${status}">${status}</span>
               <span class="chip accent" data-model-chip style="text-transform:none${modelRef ? '' : ';display:none'}"><span style="color:var(--t-3)">model</span>&nbsp;<span data-model-name>${modelRef}</span></span>
-              ${nPlugins ? html`<span class="chip muted" title="Plugins enabled in @${agent.workspace || ''}" style="text-transform:none">${nPlugins} plugin${nPlugins === 1 ? '' : 's'}</span>` : nothing}
-              ${agent.purpose ? html`<span class="chip muted" style="text-transform:none;max-width:380px;overflow:hidden;text-overflow:ellipsis;display:inline-block">${agent.purpose}</span>` : nothing}
+              ${this._gitHeaderChips(agent)}
+              ${nPlugins ? html`<span class="chip muted" title="Plugins in @${agent.workspace || ''}" style="text-transform:none">${nPlugins} plg</span>` : nothing}
+              ${agent.purpose ? html`<span class="chip muted" style="text-transform:none;max-width:280px;overflow:hidden;text-overflow:ellipsis;display:inline-block" title=${agent.purpose}>${agent.purpose}</span>` : nothing}
             </div>
           </div>
           <div class="dhdr-actions">
@@ -237,10 +260,10 @@ export class AgentsLens extends RelayLens {
             ${button({ variant: 'danger', title: 'Delete this agent (removes its YAML + DB row)', onClick: () => this.host.deleteAgent(agent.id) }, icon('delete', 11))}
           </div>
         </div>
-        <div class="stat-strip" style="--cols:6" data-stats></div>
+        <div class="stat-strip stat-strip--compact" style="--cols:6" data-stats></div>
       </div>
       <div data-native-pi-banner style="display:none"></div>
-      <div class="subtabs" data-subtabs></div>
+      <div class="subtabs subtabs--compact" data-subtabs></div>
       <div class="dbody" data-body></div>
     `, pane);
     this._detailRoot.replaceChildren(pane);
@@ -309,7 +332,7 @@ export class AgentsLens extends RelayLens {
     if (sparkEl) {
       const data = (s.activity && s.activity.some((v) => v > 0)) ? s.activity : [];
       sparkEl.innerHTML = data.length
-        ? sparklineSVG(data, { height: 28, color: tone, dot: false, strokeWidth: 1.2 })
+        ? sparklineSVG(data, { height: 18, color: tone, dot: false, strokeWidth: 1.1 })
         : '<span style="color:var(--t-3);font-family:var(--f-mono);font-size:10px">no activity</span>';
     }
     const upEl = el.querySelector('[data-c="uptime"]');

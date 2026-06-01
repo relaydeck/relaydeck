@@ -140,9 +140,33 @@ def _plain_git_info() -> dict[str, Any]:
         "insertions": 0,
         "deletions": 0,
         "files_changed": 0,
+        "untracked_files": 0,
+        "modified_files": 0,
+        "added_files": 0,
+        "deleted_files": 0,
         "repo_root": None,
         "sibling_workspaces": [],
     }
+
+
+def _summarize_porcelain(porcelain: str) -> dict[str, int]:
+    """File-level counts from `git status --porcelain` (not line ±)."""
+    counts = {"untracked": 0, "modified": 0, "added": 0, "deleted": 0, "renamed": 0}
+    for line in porcelain.splitlines():
+        if len(line) < 2:
+            continue
+        x, y = line[0], line[1]
+        if x == "?" and y == "?":
+            counts["untracked"] += 1
+        elif x == "D" or y == "D":
+            counts["deleted"] += 1
+        elif x == "A" or y == "A":
+            counts["added"] += 1
+        elif x == "R" or y == "R" or x == "C" or y == "C":
+            counts["renamed"] += 1
+        elif x != " " or y != " ":
+            counts["modified"] += 1
+    return counts
 
 
 def sanitize_workspace_name(raw: str) -> str:
@@ -303,11 +327,18 @@ def worktree_status(path: Path) -> dict[str, Any]:
     status: dict[str, Any] = {
         "branch": None, "dirty": False, "ahead": 0, "behind": 0,
         "insertions": 0, "deletions": 0, "files_changed": 0,
+        "untracked_files": 0, "modified_files": 0, "added_files": 0, "deleted_files": 0,
     }
     with contextlib.suppress(WorktreeError):
         status["branch"] = _git(path, "rev-parse", "--abbrev-ref", "HEAD").strip() or None
     with contextlib.suppress(WorktreeError):
-        status["dirty"] = bool(_git(path, "status", "--porcelain").strip())
+        porcelain = _git(path, "status", "--porcelain")
+        status["dirty"] = bool(porcelain.strip())
+        summary = _summarize_porcelain(porcelain)
+        status["untracked_files"] = summary["untracked"]
+        status["modified_files"] = summary["modified"]
+        status["added_files"] = summary["added"]
+        status["deleted_files"] = summary["deleted"]
     with contextlib.suppress(WorktreeError, ValueError):
         # behind<TAB>ahead vs the configured upstream (errors if no upstream)
         counts = _git(path, "rev-list", "--left-right", "--count", "@{upstream}...HEAD").split()
@@ -329,6 +360,71 @@ def worktree_status(path: Path) -> dict[str, Any]:
                     dele += int(parts[1])
         status["insertions"], status["deletions"], status["files_changed"] = ins, dele, files
     return status
+
+
+def repo_workspace_rows(
+    config_home: Path,
+    repo_root: str,
+    *,
+    current: str | None = None,
+) -> list[dict[str, Any]]:
+    """All registered relaydeck workspaces on `repo_root`, with git + agents."""
+    from relaydeck.config import load_workspace_registry
+
+    registry = load_workspace_registry(config_home)
+    batch = batch_workspace_git_info(
+        [(w.name, w.path) for w in registry],
+        config_home=config_home,
+    )
+    agents_by_ws: dict[str, list[dict[str, Any]]] = {}
+    try:
+        from relaydeck.orchestrator import get_orchestrator
+        orch = get_orchestrator()
+        if orch is not None:
+            for a in orch.list_agents():
+                ws = a.get("workspace")
+                if ws:
+                    agents_by_ws.setdefault(ws, []).append({
+                        "id": a.get("id"),
+                        "status": a.get("status"),
+                        "semantic_status": a.get("semantic_status"),
+                    })
+    except Exception:
+        pass
+    rows: list[dict[str, Any]] = []
+    for w in registry:
+        info = batch.get(w.name, _plain_git_info())
+        if info.get("repo_root") != repo_root:
+            continue
+        rows.append({
+            "workspace": w.name,
+            "path": str(Path(w.path).expanduser()),
+            "current": w.name == current,
+            "git": info,
+            "agents": agents_by_ws.get(w.name, []),
+        })
+    return sorted(rows, key=lambda r: (not r.get("current"), r.get("workspace") or ""))
+
+
+def git_worktree_rows(repo_root: Path, *, config_home: Path | None = None) -> list[dict[str, Any]]:
+    """`git worktree list` enriched with relaydeck workspace name when registered."""
+    import contextlib
+
+    path_by_ws: dict[str, str] = {}
+    if config_home:
+        from relaydeck.config import load_workspace_registry
+        for w in load_workspace_registry(config_home):
+            path_by_ws[str(Path(w.path).expanduser().resolve())] = w.name
+    rows: list[dict[str, Any]] = []
+    with contextlib.suppress(WorktreeError):
+        for wt in list_worktrees(repo_root):
+            p = wt.get("path") or ""
+            resolved = str(Path(p).expanduser().resolve()) if p else ""
+            rows.append({
+                **wt,
+                "workspace": path_by_ws.get(resolved),
+            })
+    return rows
 
 
 def git_status_lines(path: Path, *, limit: int = 120) -> list[dict[str, str]]:

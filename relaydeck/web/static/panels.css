@@ -1461,6 +1461,16 @@
 .git-st-untracked { color: var(--t-3); }
 .git-st-ren { color: var(--info); }
 .git-st-conflict { color: var(--warn); }
+.git-current { margin-bottom: 12px; padding: 8px 10px; background: var(--bg-1); border: 1px solid var(--line-2); border-radius: var(--r-2); }
+.git-current-k { font-family: var(--f-mono); font-size: 9px; color: var(--t-3); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 6px; }
+.git-current-row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.git-section { margin-top: 14px; }
+.git-section-k { font-family: var(--f-mono); font-size: 9px; color: var(--t-3); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 6px; }
+.git-table { width: 100%; border-collapse: collapse; font-family: var(--f-mono); font-size: 10px; }
+.git-table th { text-align: left; color: var(--t-4); font-weight: 500; padding: 4px 8px 6px 0; border-bottom: 1px solid var(--line-1); }
+.git-table td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line-1); color: var(--t-2); vertical-align: top; }
+.git-table tr.git-row-cur td { background: var(--acc-soft); }
+.git-chips-cell { display: flex; flex-wrap: wrap; gap: 4px; }
 .plx-field-ctrl textarea { resize: vertical; line-height: 1.5; }
 .plx-src {
   font-family: var(--f-mono); font-size: 8px; letter-spacing: .05em; text-transform: uppercase;

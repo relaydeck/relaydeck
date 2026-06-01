@@ -205,22 +205,27 @@ export class AgentsLens extends RelayLens {
     const ws = (this.host.state.workspaces || []).find((w) => w.name === agent.workspace);
     const git = ws?.git;
     if (!git?.is_git) {
-      return html`<span class="chip muted" title="Workspace path is not a git repo">no git</span>`;
+      return html`<span class="chip muted" title="Not a git repo">no git</span>`;
     }
+    const kind = git.kind === 'worktree'
+      ? html`<span class="chip accent" title="Worktree checkout">${icon('git', 10)} wt</span>`
+      : html`<span class="chip muted" title="Main checkout">${icon('git', 10)} main</span>`;
+    const branch = git.branch
+      ? html`<span class="chip muted" title="Branch" style="text-transform:none">${git.branch}</span>`
+      : nothing;
     const ins = git.insertions || 0;
     const dele = git.deletions || 0;
-    const diff = (ins || dele) ? html`<span class="chip ${git.dirty ? 'warn' : 'muted'}" title="Line churn vs HEAD">+${ins}/-${dele}</span>` : nothing;
-    const kind = git.kind === 'worktree'
-      ? html`<span class="chip accent" title="Linked git worktree — isolated branch checkout">${icon('git', 10)} worktree</span>`
-      : html`<span class="chip muted" title="Main repo checkout">${icon('git', 10)} main</span>`;
-    const branch = git.branch
-      ? html`<span class="chip muted" title="Current branch" style="text-transform:none">${git.branch}${git.dirty ? ' •' : ''}</span>`
-      : nothing;
+    const plus = ins ? html`<span class="chip accent" title="Lines + vs HEAD">+${ins}</span>` : nothing;
+    const minus = dele ? html`<span class="chip warn" title="Lines − vs HEAD">-${dele}</span>` : nothing;
+    const neu = git.untracked_files
+      ? html`<span class="chip muted" title="Untracked files">${git.untracked_files} new</span>` : nothing;
+    const mod = git.modified_files
+      ? html`<span class="chip muted" title="Modified files">${git.modified_files} mod</span>` : nothing;
     const sibs = (git.sibling_workspaces || []).length;
     const sibChip = sibs
-      ? html`<span class="chip muted" title="${sibs} other workspace(s) on this repo — use worktrees for parallel branches">${sibs} sibling${sibs === 1 ? '' : 's'}</span>`
+      ? html`<span class="chip muted" title="${sibs} other workspace(s) on this repo">${sibs} tree${sibs === 1 ? '' : 's'}</span>`
       : nothing;
-    return html`${kind}${branch}${diff}${sibChip}`;
+    return html`${kind}${branch}${plus}${minus}${neu}${mod}${sibChip}`;
   }
 
   _renderAgentDetail(root, agent) {

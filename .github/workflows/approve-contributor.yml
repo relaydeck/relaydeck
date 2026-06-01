@@ -4,6 +4,9 @@ name: Approve Contributor
 # adds that issue's author to .github/APPROVED_CONTRIBUTORS so the gates stop
 # auto-closing their submissions.
 #
+# Pushes use the relaydeck Contributor Gate GitHub App (see
+# .github/CONTRIBUTOR_GATE_APP.md) so commits can bypass the main PR ruleset.
+#
 # Adapted, with thanks, from the pi project (earendil-works/pi).
 
 on:
@@ -11,18 +14,35 @@ on:
     types: [created]
 
 permissions:
-  contents: write
-  issues: write
+  contents: read
+  issues: read
 
 jobs:
   approve:
     if: ${{ !github.event.issue.pull_request }}
     runs-on: ubuntu-latest
     steps:
+      - name: Create app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CONTRIBUTOR_GATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CONTRIBUTOR_GATE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+
+      - name: Get app bot user ID
+        id: app-bot
+        run: echo "user-id=$(gh api "/users/${{ steps.app-token.outputs.app-slug }}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          token: ${{ steps.app-token.outputs.token }}
           ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
       - name: Update contributor approval
         id: update
@@ -92,9 +112,12 @@ jobs:
 
       - name: Commit and push
         if: steps.update.outputs.status == 'added' || steps.update.outputs.status == 'updated'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name '${{ steps.app-token.outputs.app-slug }}[bot]'
+          git config user.email '${{ steps.app-bot.outputs.user-id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com'
+          gh auth setup-git
           git add .github/APPROVED_CONTRIBUTORS
           git diff --staged --quiet || git commit -m "chore: approve contributor ${{ github.event.issue.user.login }}"
           git push
@@ -103,6 +126,7 @@ jobs:
         if: steps.update.outputs.status != 'skipped'
         uses: actions/github-script@v9
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const author = context.payload.issue.user.login;
             const cap = '${{ steps.update.outputs.capability }}';

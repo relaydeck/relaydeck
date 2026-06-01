@@ -1,0 +1,18 @@
+# GitHub App manifest for the contributor approval workflow.
+# Maintainer setup: .github/CONTRIBUTOR_GATE_APP.md
+
+name: relaydeck Contributor Gate
+url: https://github.com/relaydeck/relaydeck
+redirect_url: https://github.com/relaydeck/relaydeck
+description: >-
+  Updates .github/APPROVED_CONTRIBUTORS when maintainers reply lgtm/lgtmi on
+  issues, so the issue/PR gate stops auto-closing approved contributors.
+public: false
+default_permissions:
+  contents: write
+  issues: write
+  metadata: read
+default_events: []
+hook_attributes:
+  url: https://github.com/relaydeck/relaydeck
+  active: false

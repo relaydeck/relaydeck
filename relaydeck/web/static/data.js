@@ -332,7 +332,10 @@ export function liveOnEvent(event) {
     // Messages lens aggregates by fanning across agent inboxes — if
     // it's mounted it'll have its own per-agent subs that just fired.
   }
-  if (t.startsWith('workspace.')) { live.invalidate('/api/workspaces'); live.invalidate('/api/worktrees'); }
+  if (t.startsWith('workspace.')) {
+    live.invalidate('/api/workspaces');
+    live.invalidate('/api/worktrees');
+  }
   if (t.startsWith('worktree.')) { live.invalidate('/api/worktrees'); live.invalidate('/api/workspaces'); }
   if (t === 'skills.changed') live.invalidate('/api/plugins/skills');
   if (t === 'themes.changed') live.invalidate('/api/themes');

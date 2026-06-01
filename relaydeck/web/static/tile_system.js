@@ -33,6 +33,7 @@ import { api, savePreferences, stamped } from './data.js';
 // /api/plugins/ui. Each entry mirrors the plugin manifest shape.
 const CORE_TILES = [
   { id: 'core:terminal',  label: 'Terminal',  icon: 'play',     source: 'core', default_state: 'tab', protected: true,  description: "Live tty mirror of the agent's harness", module: '/static/tiles/terminal.js' },
+  { id: 'core:git',       label: 'Git',       icon: 'git',      source: 'core', default_state: 'tab',                    description: 'Branch, worktree, GitHub workflow, file changes', module: '/static/tiles/git.js' },
   { id: 'core:identity',  label: 'Identity',  icon: 'agent',    source: 'core', default_state: 'tab',                    description: 'Model, plugins, purpose, prompt',          module: '/static/tiles/identity.js' },
   { id: 'core:context',   label: 'Context',   icon: 'activity', source: 'core', default_state: 'tab',                    description: 'Token-usage heatmap over time',            module: '/static/tiles/context.js' },
   { id: 'core:events',    label: 'Events',    icon: 'bolt',     source: 'core', default_state: 'tab',                    description: 'Recent events emitted by this agent',      module: '/static/tiles/events.js' },

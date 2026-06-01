@@ -331,6 +331,23 @@ def worktree_status(path: Path) -> dict[str, Any]:
     return status
 
 
+def git_status_lines(path: Path, *, limit: int = 120) -> list[dict[str, str]]:
+    """Porcelain `git status` lines for a vim-style change log in the UI."""
+    import contextlib
+
+    path = path.expanduser()
+    lines: list[dict[str, str]] = []
+    with contextlib.suppress(WorktreeError):
+        raw = _git(path, "status", "--porcelain").splitlines()
+        for line in raw[: max(0, limit)]:
+            if len(line) < 3:
+                continue
+            code = line[:2].rstrip() or line[0]
+            p = line[3:].strip()
+            lines.append({"code": code, "path": p})
+    return lines
+
+
 def main_worktree(path: Path) -> Path:
     """The main working tree of the repo `path` belongs to (the first
     entry of `git worktree list`). Lets us run `git worktree remove` from

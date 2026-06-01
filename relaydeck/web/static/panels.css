@@ -141,6 +141,20 @@
   background: var(--bg-0);
   flex-shrink: 0;
 }
+.dhdr--compact {
+  padding: 10px 14px 8px;
+}
+.dhdr--compact .dhdr-name {
+  font-size: var(--t-xl);
+  margin: 2px 0 4px;
+}
+.dhdr--compact .dhdr-eyebrow { margin-bottom: 0; }
+.dhdr-row--tight { gap: 5px; margin-top: 4px; }
+.dhdr-avatar--sm {
+  width: 40px; height: 40px;
+  border-radius: var(--r-2);
+}
+.pane--agent .dhdr-actions .btn { height: 28px; padding: 0 10px; font-size: var(--t-xs); }
 .dhdr-top {
   display: flex; align-items: flex-start; gap: 16px;
   min-width: 0;
@@ -208,6 +222,17 @@
   border-radius: var(--r-3);
   overflow: hidden;
 }
+.stat-strip--compact {
+  margin-top: 8px;
+  border-radius: var(--r-2);
+}
+.stat-strip--compact .stat-cell {
+  padding: 6px 10px;
+  gap: 3px;
+}
+.stat-strip--compact .stat-cell .k { font-size: 8px; letter-spacing: .12em; }
+.stat-strip--compact .stat-cell .v { font-size: 13px; }
+.stat-strip--compact .stat-cell .sub { font-size: 8px; }
 .stat-cell {
   padding: 10px 14px;
   border-right: 1px solid var(--line-1);
@@ -261,6 +286,11 @@
   background: var(--bg-2); color: var(--t-3);
 }
 .subtab.on .badge { background: var(--acc-soft); color: var(--acc); }
+
+.subtabs--compact { padding: 0 12px; }
+.subtabs--compact .subtab { height: 30px; padding: 0 10px; font-size: 10px; }
+.pane--agent .dbody { padding: 8px 10px; }
+.pane--agent .dbody.fullbleed { padding: 0; }
 
 .subtabs .sp { flex: 1; min-width: 0; }
 .subtabs .right-cluster {
@@ -1377,6 +1407,60 @@
   width: 100%; font-family: var(--f-mono); font-size: var(--t-xs);
   background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r-2); padding: 7px 9px;
 }
+
+/* GIT TILE (agent detail) */
+.git-tile { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.git-subtabs {
+  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+  padding: 0 0 8px; border-bottom: 1px solid var(--line-1);
+}
+.git-subtabs .sp { flex: 1; }
+.git-sub {
+  font-family: var(--f-mono); font-size: 10px; padding: 4px 10px;
+  border-radius: var(--r-1); color: var(--t-3); border: 1px solid transparent;
+}
+.git-sub.on { color: var(--acc); border-color: var(--acc-line); background: var(--acc-soft); }
+.git-sub .badge {
+  font-size: 9px; padding: 0 5px; border-radius: 3px;
+  background: var(--bg-2); margin-left: 4px;
+}
+.git-pane { padding: 8px 0; font-size: var(--t-xs); }
+.git-loading, .git-callout { font-family: var(--f-mono); font-size: var(--t-xs); color: var(--t-3); padding: 8px 0; }
+.git-callout.warn { color: var(--warn); background: var(--warn-soft, rgba(180,120,40,.08)); padding: 8px 10px; border-radius: var(--r-2); border: 1px solid var(--line-2); }
+.git-callout.ok { color: var(--ok); }
+.git-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+@media (max-width: 900px) { .git-grid { grid-template-columns: 1fr; } }
+.git-card {
+  padding: 8px 10px; background: var(--bg-1); border: 1px solid var(--line-2);
+  border-radius: var(--r-2); min-width: 0;
+}
+.git-card-k { font-family: var(--f-mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--t-3); }
+.git-card-v { font-size: var(--t-sm); font-weight: 600; margin: 4px 0 2px; }
+.git-card-sub { font-family: var(--f-mono); font-size: 9px; color: var(--t-3); line-height: 1.45; }
+.git-diff { color: var(--acc); }
+.git-meta, .git-foot { font-family: var(--f-mono); font-size: 9px; color: var(--t-4); margin-top: 6px; }
+.git-sibs { margin-top: 10px; border-top: 1px solid var(--line-1); padding-top: 8px; }
+.git-sibs-k { font-family: var(--f-mono); font-size: 9px; color: var(--t-3); margin-bottom: 6px; }
+.git-sib-row {
+  display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px;
+  font-family: var(--f-mono); font-size: 10px; padding: 3px 0;
+}
+.git-log-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.git-log-head { font-family: var(--f-mono); font-size: 9px; color: var(--t-3); padding: 4px 0 6px; flex-shrink: 0; }
+.git-log {
+  flex: 1; min-height: 120px; max-height: 420px; overflow: auto;
+  font-family: var(--f-mono); font-size: 11px; line-height: 1.5;
+  background: var(--bg-term, #1a1a1a); color: var(--t-2);
+  border: 1px solid var(--line-2); border-radius: var(--r-2); padding: 8px 10px;
+}
+.git-log-line { white-space: pre-wrap; word-break: break-all; }
+.git-log-code { color: var(--acc); margin-right: 6px; }
+.git-st-mod { color: #c9a227; }
+.git-st-add { color: var(--ok); }
+.git-st-del { color: var(--err); }
+.git-st-untracked { color: var(--t-3); }
+.git-st-ren { color: var(--info); }
+.git-st-conflict { color: var(--warn); }
 .plx-field-ctrl textarea { resize: vertical; line-height: 1.5; }
 .plx-src {
   font-family: var(--f-mono); font-size: 8px; letter-spacing: .05em; text-transform: uppercase;

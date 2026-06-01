@@ -14,6 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sqlite3
+import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -33,19 +37,6 @@ class OpenCodeAgent(HarnessAgent):
         r"\b(?:allow|permit|approve)\b.*\?",
         r"\bpermission\b.*\?",
     )
-
-    # Token metering: NOT wired yet. pi/codex/claude tail an on-disk session
-    # transcript for per-call token usage, but opencode 1.4.7 keeps its global
-    # storage (~/.local/share/opencode/storage) as session_diff snapshots with
-    # no readily-tailable per-message token record, and it's shared across
-    # agents (no per-agent data dir). So opencode agents honestly report 0
-    # tokens rather than a fabricated/double-counted number. The future fix is
-    # per-agent XDG_DATA_HOME isolation (opencode honors it) + a tailer once a
-    # token-bearing record is locatable. Same gap means no
-    # `harness.assistant_message` bus event either (pi/codex/claude emit it
-    # from their transcript JSONL) — without a tail-able structured turn the
-    # only signal is raw PTY bytes, which don't classify into clean message
-    # boundaries. Honest gap, not a fabricated event.
 
     # OpenCode runs a full-screen TUI; split the body and Enter into two
     # writes so a paste-debouncing input widget can't swallow the CR
@@ -69,8 +60,16 @@ class OpenCodeAgent(HarnessAgent):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._config_home = Path.home() / ".relaydeck"
+        self._usage_worker = None
+        self._usage_watermarks: dict[str, int] = {}  # db path → last message.time_created
 
     # -- OpenCode runtime files -----------------------------------------
+
+    def _opencode_xdg_data(self) -> Path:
+        return self._opencode_home() / "xdg-data"
+
+    def _opencode_db_path(self, xdg_data: Path) -> Path:
+        return xdg_data / "share" / "opencode" / "opencode.db"
 
     def _opencode_home(self) -> Path:
         base = (
@@ -87,12 +86,121 @@ class OpenCodeAgent(HarnessAgent):
         return self._opencode_home() / "opencode.json"
 
     def log_path(self) -> Path | None:
+        isolated = self._opencode_db_path(self._opencode_xdg_data())
+        if isolated.exists():
+            return isolated.parent / "log"
         return Path.home() / ".local" / "share" / "opencode" / "log"
+
+    # -- Usage metering (opencode.db assistant rows) --------------------
+
+    def run(self) -> None:
+        self._seed_usage_watermarks()
+        from relaydeck.workers import register_worker
+
+        self._usage_worker = register_worker(
+            name="opencode.usage-tailer",
+            plugin="opencode",
+            target=lambda w: self._usage_tick(w),
+            interval_s=1.0,
+            config={"agent_id": self.agent_id, "harness": "opencode"},
+            agent_id=self.agent_id,
+            description=(
+                "Polls OpenCode's SQLite message store for assistant turns with "
+                "token/cost JSON and emits usage.record (metering writes "
+                "usage_records). Tails the per-agent DB (XDG_DATA_HOME) and, when "
+                "a workspace cwd is known, the global DB filtered to that directory."
+            ),
+        )
+        sources = [str(p) for p, _ in self._usage_sources()]
+        self._usage_worker.log(f"watching {', '.join(sources) or 'no db'}")
+        try:
+            super().run()
+        finally:
+            with suppress(Exception):
+                self._scan_usage_dbs()
+            if self._usage_worker:
+                self._usage_worker.stop()
+
+    def _usage_tick(self, worker) -> None:
+        try:
+            self._scan_usage_dbs()
+        except Exception as exc:
+            worker.log(f"sweep error: {exc}", level="warn")
+
+    def _usage_sources(self) -> list[tuple[Path, str | None]]:
+        """(db path, session.directory filter). None filter = whole DB."""
+        out: list[tuple[Path, str | None]] = []
+        isolated = self._opencode_db_path(self._opencode_xdg_data())
+        out.append((isolated, None))
+        cwd = self._get_cwd()
+        if cwd:
+            global_db = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+            try:
+                directory = os.path.realpath(cwd)
+            except OSError:
+                directory = cwd
+            if global_db != isolated:
+                out.append((global_db, directory))
+        return out
+
+    def _seed_usage_watermarks(self) -> None:
+        cutoff_ms = int((time.time() - 86400) * 1000)
+        for db_path, directory in self._usage_sources():
+            key = str(db_path)
+            latest = _opencode_usage_watermark(db_path, directory)
+            # Replay the last 24h on start so the stat strip catches up after
+            # metering was enabled; steady-state ticks only advance the watermark.
+            self._usage_watermarks[key] = min(latest, cutoff_ms) if latest else 0
+
+    def _scan_usage_dbs(self) -> None:
+        for db_path, directory in self._usage_sources():
+            self._scan_usage_db(db_path, directory)
+
+    def _scan_usage_db(self, db_path: Path, directory: str | None) -> None:
+        key = str(db_path)
+        after = self._usage_watermarks.get(key, 0)
+        rows = _opencode_fetch_assistant_rows(db_path, directory, after)
+        if not rows:
+            return
+        for msg_id, session_id, raw, created in rows:
+            self._usage_watermarks[key] = max(self._usage_watermarks.get(key, 0), int(created))
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if data.get("role") != "assistant":
+                continue
+            self._emit_usage_row(msg_id, session_id, data)
+
+    def _emit_usage_row(self, msg_id: str, session_id: str, data: dict) -> None:
+        tok = data.get("tokens") or {}
+        prompt = int(tok.get("input") or 0)
+        completion = int(tok.get("output") or 0) + int(tok.get("reasoning") or 0)
+        if prompt == 0 and completion == 0:
+            total = int(tok.get("total") or 0)
+            if total <= 0:
+                return
+            completion = max(0, total - prompt)
+        cost = data.get("cost")
+        payload = {
+            "agent_id": self.agent_id,
+            "model": str(data.get("modelID") or "unknown"),
+            "provider": str(data.get("providerID") or "unknown"),
+            "prompt": prompt,
+            "completion": completion,
+            "cost_usd": float(cost) if cost is not None else None,
+            "session_id": session_id or msg_id,
+            "harness": "opencode",
+        }
+        with suppress(Exception):
+            self.emit("usage.record", payload)
+        self._emit_bus("usage.record", payload)
 
     # -- Command / env ---------------------------------------------------
 
     def _build_env(self) -> dict[str, str]:
         env = super()._build_env()
+        env["XDG_DATA_HOME"] = str(self._opencode_xdg_data())
         # `or` (not setdefault): an inherited COLORTERM="" / FORCE_COLOR=""
         # is present-but-empty, which setdefault wouldn't override — opencode
         # would then render without truecolor.
@@ -392,3 +500,58 @@ class OpenCodeAgent(HarnessAgent):
         if isinstance(value, list | tuple):
             return list(value)
         return [value]
+
+
+def _opencode_connect_ro(db_path: Path) -> sqlite3.Connection | None:
+    if not db_path.exists():
+        return None
+    try:
+        return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None
+
+
+def _opencode_usage_watermark(db_path: Path, directory: str | None) -> int:
+    conn = _opencode_connect_ro(db_path)
+    if conn is None:
+        return 0
+    try:
+        if directory:
+            row = conn.execute(
+                "SELECT MAX(m.time_created) FROM message m "
+                "JOIN session s ON s.id = m.session_id WHERE s.directory = ?",
+                (directory,),
+            ).fetchone()
+        else:
+            row = conn.execute("SELECT MAX(time_created) FROM message").fetchone()
+        return int((row[0] if row else 0) or 0)
+    except sqlite3.Error:
+        return 0
+    finally:
+        conn.close()
+
+
+def _opencode_fetch_assistant_rows(
+    db_path: Path, directory: str | None, after: int,
+) -> list[tuple[str, str, str, int]]:
+    conn = _opencode_connect_ro(db_path)
+    if conn is None:
+        return []
+    try:
+        if directory:
+            return conn.execute(
+                "SELECT m.id, m.session_id, m.data, m.time_created FROM message m "
+                "JOIN session s ON s.id = m.session_id "
+                "WHERE s.directory = ? AND m.time_created > ? "
+                "ORDER BY m.time_created ASC",
+                (directory, after),
+            ).fetchall()
+        return conn.execute(
+            "SELECT id, session_id, data, time_created FROM message "
+            "WHERE time_created > ? ORDER BY time_created ASC",
+            (after,),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()

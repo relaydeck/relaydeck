@@ -7,14 +7,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from plugins.harnesses.opencode.agent import OpenCodeAgent
+from plugins.harnesses.opencode.agent import (
+    OpenCodeAgent,
+    _opencode_fetch_assistant_rows,
+    _opencode_usage_watermark,
+)
 
 
 def _make_agent(tmp_path: Path, monkeypatch, config: dict | None = None) -> OpenCodeAgent:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     cfg_home = tmp_path / ".relaydeck"
     ws_path = tmp_path / "repo"
-    ws_path.mkdir(parents=True)
+    ws_path.mkdir(parents=True, exist_ok=True)
     cfg_home.mkdir(parents=True, exist_ok=True)
     (cfg_home / "config.toml").write_text(
         f'[[workspace]]\nname = "demo"\npath = "{ws_path}"\nplugins = ["skills"]\n'
@@ -161,6 +165,7 @@ def test_opencode_env_points_to_generated_config(tmp_path, monkeypatch):
     assert "Avoid these tools" in instructions.read_text()
     assert env["RELAYDECK_AGENT_ID"] == "coder"
     assert env["RELAYDECK_WORKSPACE"] == "demo"
+    assert env["XDG_DATA_HOME"] == str(agent._opencode_xdg_data())
     assert env["COLORTERM"] == "truecolor"
     assert env["FORCE_COLOR"] == "3"
     assert env["TERM_PROGRAM"] == "xterm.js"
@@ -269,6 +274,71 @@ def test_opencode_command_override_wins(tmp_path, monkeypatch):
     agent = _make_agent(tmp_path, monkeypatch, {"command": "opencode models"})
 
     assert agent._build_command() == ["opencode", "models"]
+
+
+def _seed_opencode_db(db_path: Path, directory: str) -> None:
+    import sqlite3
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript("""
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, slug TEXT NOT NULL,
+                directory TEXT NOT NULL, title TEXT NOT NULL, version TEXT NOT NULL,
+                time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL
+            );
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+        """)
+        conn.execute(
+            "INSERT INTO session VALUES (?,?,?,?,?,?,?,?)",
+            ("ses_1", "proj", "slug", directory, "t", "1", 1000, 2000),
+        )
+        payload = json.dumps({
+            "role": "assistant",
+            "cost": 0.01,
+            "tokens": {"input": 100, "output": 50, "reasoning": 10},
+            "modelID": "qwen/qwen3.7-max",
+            "providerID": "openrouter",
+        })
+        conn.execute(
+            "INSERT INTO message VALUES (?,?,?,?,?)",
+            ("msg_1", "ses_1", 1500, 1500, payload),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_opencode_usage_tailer_reads_global_db(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    agent = _make_agent(tmp_path, monkeypatch)
+    repo = tmp_path / "repo"
+    global_db = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    _seed_opencode_db(global_db, str(repo.resolve()))
+    seen: list[dict] = []
+    agent._emit_bus = lambda _t, d: seen.append(d)  # type: ignore[method-assign]
+
+    agent._scan_usage_dbs()
+
+    assert len(seen) == 1
+    assert seen[0]["prompt"] == 100
+    assert seen[0]["completion"] == 60
+    assert seen[0]["cost_usd"] == 0.01
+    assert seen[0]["provider"] == "openrouter"
+
+
+def test_opencode_usage_watermark_skips_history(tmp_path):
+    db = tmp_path / "opencode.db"
+    _seed_opencode_db(db, "/ws")
+    assert _opencode_usage_watermark(db, "/ws") == 1500
+    assert _opencode_fetch_assistant_rows(db, "/ws", 1500) == []
+    rows = _opencode_fetch_assistant_rows(db, "/ws", 1000)
+    assert len(rows) == 1
 
 
 def test_opencode_appends_config_args(tmp_path, monkeypatch):

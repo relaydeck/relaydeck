@@ -54,7 +54,7 @@ function _statCellHTML(id, running) {
     case 'events':
       return `<div class="stat-cell"><div class="k">Events</div><div class="v acc" data-c="events">—</div><div class="sub" data-c="events-sub">—</div></div>`;
     case 'tick':
-      return `<div class="stat-cell"><div class="k">Last tick</div><div class="v" data-c="tick">—</div><div class="sub" data-c="tick-sub">${running ? 'live' : '—'}</div></div>`;
+      return `<div class="stat-cell"><div class="k">Last tick</div><div class="v" data-c="tick">—</div><div class="sub" data-c="tick-sub">—</div></div>`;
     case 'activity':
       return `<div class="stat-cell"><div class="k">Activity</div><div data-c="spark" style="height:18px"></div><div class="sub">30m</div></div>`;
     default:
@@ -144,13 +144,46 @@ export class AgentsLens extends RelayLens {
         <div class="right">${right}</div>`;
   }
 
-  // Live hook (app.js calls this when /api/agents refreshes). Re-render only
-  // the SIDEBAR — never the detail (no detail() method, so the base's reactive
-  // pass is a no-op for this lens). lit-html keeps the search input focused.
+  // Live hooks (app.js). Sidebar re-renders reactively; detail header/stats
+  // patch in place so the terminal tile is never remounted.
   onAgentsChanged() {
     const side = this._sideRoot;
     if (side && side.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
     this.requestSidebarUpdate();
+    this._patchDetailHeader();
+  }
+
+  onWorkspacesChanged() {
+    this._patchDetailHeader();
+    const agent = this._activeAgent();
+    const ws = agent?.workspace;
+    if (ws) live.invalidate(`/api/workspaces/${encodeURIComponent(ws)}/git-detail`);
+  }
+
+  _activeAgent() {
+    if (!this.activeAgentId) return null;
+    return (this.host.state.agents || []).find((a) => a.id === this.activeAgentId) || null;
+  }
+
+  _patchDetailHeader() {
+    const agent = this._activeAgent();
+    const pane = this._detailRoot?.querySelector('.pane');
+    if (!agent || !pane) return;
+    const status = visualStatus(agent);
+    const badge = pane.querySelector('.sbadge');
+    if (badge) {
+      badge.className = `sbadge ${status}`;
+      badge.textContent = status;
+    }
+    const gitHost = pane.querySelector('[data-git-chips]');
+    if (gitHost) render(this._gitHeaderChips(agent), gitHost);
+    const ws = (this.host.state.workspaces || []).find((w) => w.name === agent.workspace);
+    const nPlugins = ws ? (ws.plugins || []).length : 0;
+    const plg = pane.querySelector('[data-plg-chip]');
+    if (plg) {
+      plg.style.display = nPlugins ? '' : 'none';
+      plg.textContent = `${nPlugins} plg`;
+    }
   }
 
   async _loadRollup() {
@@ -252,8 +285,9 @@ export class AgentsLens extends RelayLens {
             <div class="dhdr-row dhdr-row--tight">
               <span class="sbadge ${status}">${status}</span>
               <span class="chip accent" data-model-chip style="text-transform:none${modelRef ? '' : ';display:none'}"><span style="color:var(--t-3)">model</span>&nbsp;<span data-model-name>${modelRef}</span></span>
-              ${this._gitHeaderChips(agent)}
-              ${nPlugins ? html`<span class="chip muted" title="Plugins in @${agent.workspace || ''}" style="text-transform:none">${nPlugins} plg</span>` : nothing}
+              <span data-git-chips>${this._gitHeaderChips(agent)}</span>
+              ${nPlugins ? html`<span class="chip muted" data-plg-chip title="Plugins in @${agent.workspace || ''}" style="text-transform:none">${nPlugins} plg</span>`
+                : html`<span class="chip muted" data-plg-chip style="display:none">0 plg</span>`}
               ${agent.purpose ? html`<span class="chip muted" style="text-transform:none;max-width:280px;overflow:hidden;text-overflow:ellipsis;display:inline-block" title=${agent.purpose}>${agent.purpose}</span>` : nothing}
             </div>
           </div>
@@ -312,10 +346,18 @@ export class AgentsLens extends RelayLens {
     const tone = agent.status === 'errored' ? 'var(--err)'
       : (visualStatus(agent) === 'awaiting-input') ? 'var(--warn)' : 'var(--acc)';
     const key = `/api/agents/${encodeURIComponent(agent.id)}/stats`;
-    this._statsUnsub = live.subscribe(key, (s) => { if (s) this._patchStats(el, agent, s, tone, running); });
+    this._statsAgentId = agent.id;
+    this._statsUnsub = live.subscribe(key, (s) => {
+      if (s) this._patchStats(el, this._statsAgentId, s);
+    });
   }
 
-  _patchStats(el, agent, s, tone, running) {
+  _patchStats(el, agentId, s) {
+    const agent = (this.host.state.agents || []).find((a) => a.id === agentId) || {};
+    const running = (agent.semantic_status || agent.status) === 'running'
+      || visualStatus(agent) === 'running' || visualStatus(agent) === 'working';
+    const tone = agent.status === 'errored' ? 'var(--err)'
+      : (visualStatus(agent) === 'awaiting-input') ? 'var(--warn)' : 'var(--acc)';
     const set = (k, v) => { const n = el.querySelector(`[data-c="${k}"]`); if (n) n.textContent = v; };
     const activeModel = s.model || agent.config?.preset || agent.config?.model || '';
     const pane = el.closest('.pane');
@@ -329,10 +371,12 @@ export class AgentsLens extends RelayLens {
     set('events', fmtNum(s.events_total || 0));
     set('events-sub', s.last_event_type ? `last: ${s.last_event_type}` : '—');
     const tickEl = el.querySelector('[data-c="tick"]');
+    const tickSub = el.querySelector('[data-c="tick-sub"]');
     if (tickEl) {
       tickEl.textContent = s.last_event_ts ? relTime(s.last_event_ts * 1000) : '—';
-      if (running) tickEl.style.color = 'var(--ok)';
+      tickEl.style.color = running ? 'var(--ok)' : '';
     }
+    if (tickSub) tickSub.textContent = running ? 'live' : '—';
     const sparkEl = el.querySelector('[data-c="spark"]');
     if (sparkEl) {
       const data = (s.activity && s.activity.some((v) => v > 0)) ? s.activity : [];

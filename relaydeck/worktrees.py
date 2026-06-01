@@ -52,7 +52,9 @@ WORKTREE_CONFIG_REL = Path(".relaydeck") / "worktree.yaml"
 # explicitly call `clear_workspace_git_info_cache` so newly-created
 # branches show up immediately; externally-driven changes (operator
 # commits, branch switches outside relaydeck) bleed in via the TTL.
-_GIT_INFO_TTL_S = 30.0
+# Align with dashboard LiveStore heartbeat (12s in data.js) so /api/workspaces
+# picks up git init / branch switches without a long stale "no git" chip.
+_GIT_INFO_TTL_S = 12.0
 _CASE_INSENSITIVE_FS = (
     os.name == "posix" and os.uname().sysname == "Darwin"
 ) or os.name == "nt"

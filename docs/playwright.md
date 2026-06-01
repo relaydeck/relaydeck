@@ -26,10 +26,12 @@ relearning it. Referenced from `AGENTS.md`.
   `display:flex` (not a 3-row grid) and `.main` must stay tall (`flex:1`). If
   `.main` collapses to ~26px the workspace is broken — inject a fake banner via
   `browser_evaluate` and assert `document.querySelector('.main').getBoundingClientRect().height > 400`.
-- **Agent detail Git tab**: `core:git` tile — `Status` / `Changes` sub-tabs;
-  header chips (`worktree`/`main`, branch, `+N/-M`). API:
-  `GET /api/workspaces/<ws>/git-detail`. Compact agent header: `.pane--agent`,
-  `.stat-strip--compact`, `.subtabs--compact`.
+- **Agent detail Git tab**: `core:git` tile — `Trees` / `Files` sub-tabs;
+  header chips (`wt`/`main`, branch, `+N`, `-M`, `N new`). API:
+  `GET /api/workspaces/<ws>/git-detail`. Chips refresh on `onWorkspacesChanged`
+  (12s heartbeat + SSE `workspace.*`) without remounting the terminal.
+- **Stat strip live**: subscribes to `/api/agents/{id}/stats` — patches in place
+  on `usage.record` / `agent.*` + 12s heartbeat. Uptime ticks every 1s locally.
 
 ## Verify objectively (no eyes needed)
 - `browser_evaluate(() => {...})` — read computed styles / DOM state. Examples:

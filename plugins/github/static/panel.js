@@ -707,7 +707,6 @@ export default class GithubPanel {
       return html`<div class="gh-empty">Workspace ${wsName} is no longer registered.</div>`;
     }
     const ws = w.workspace;
-    this._ensureEditorOpen(ws);
     const statusText = w.config_error
       ? 'config error'
       : (w.running ? 'polling' : (w.configured ? 'configured' : 'not configured'));
@@ -1227,6 +1226,7 @@ export default class GithubPanel {
       rule, idx, kind, field,
       start: typeof el.selectionStart === 'number' ? el.selectionStart : null,
       end: typeof el.selectionEnd === 'number' ? el.selectionEnd : null,
+      value: typeof el.value === 'string' ? el.value : null,
     };
   }
 
@@ -1235,6 +1235,7 @@ export default class GithubPanel {
     const el = e.currentTarget;
     if (typeof el.selectionStart === 'number') this._tplTarget.start = el.selectionStart;
     if (typeof el.selectionEnd === 'number') this._tplTarget.end = el.selectionEnd;
+    if (typeof el.value === 'string') this._tplTarget.value = el.value;
   }
 
   _defaultTemplateTarget(rule) {
@@ -1249,9 +1250,8 @@ export default class GithubPanel {
 
   _insertTemplate(rule, path) {
     const token = `{{ ${path} }}`;
-    const target = (this._tplTarget && this._tplTarget.rule === rule)
-      ? this._tplTarget
-      : this._defaultTemplateTarget(rule);
+    const explicitTarget = this._tplTarget && this._tplTarget.rule === rule;
+    const target = explicitTarget ? this._tplTarget : this._defaultTemplateTarget(rule);
     if (!target) {
       this._copyText(token);
       this.editorMsg = {kind: 'ok', text: `copied ${token}`};
@@ -1262,7 +1262,19 @@ export default class GithubPanel {
     const params = action && action[target.kind];
     if (!params) return;
 
-    if (target.kind === 'bus.emit' && target.field === 'data') {
+    if (target.kind === 'bus.emit' && target.field === 'data' && explicitTarget) {
+      const current = target.value ?? (params.data ? JSON.stringify(params.data, null, 0) : '');
+      const text = _insertToken(current, token, target.start, target.end);
+      try {
+        const parsed = text ? JSON.parse(text) : {};
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not object');
+        params.data = parsed;
+      } catch (_) {
+        this.editorMsg = {kind: 'err', text: 'data must stay valid JSON'};
+        this._render();
+        return;
+      }
+    } else if (target.kind === 'bus.emit' && target.field === 'data') {
       const data = (params.data && typeof params.data === 'object' && !Array.isArray(params.data))
         ? {...params.data}
         : {};
@@ -1310,7 +1322,7 @@ export default class GithubPanel {
     rule.when = rule.when || {};
     if (value) rule.when.action = value;
     else delete rule.when.action;
-    this._render();
+    // Leaf control: avoid remounting the dropdown while the user is picking.
   }
 
   _addPredicate(rule) {

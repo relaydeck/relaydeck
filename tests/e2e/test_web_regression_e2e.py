@@ -21,6 +21,7 @@ from ._webutil import (
     boot_page,
     errors,
     make_ws_dir,
+    put_json,
     seed_agent,
     seed_workspace,
     set_input,
@@ -66,6 +67,71 @@ def test_every_lens_renders_without_console_errors(live_daemon, browser, tmp_pat
 
         bad = errors(msgs)
         assert not bad, f"console errors while visiting {lens_titles}:\n" + "\n".join(bad)
+    finally:
+        ctx.close()
+
+
+def test_github_workspace_sidebar_opens_visual_rule_builder(live_daemon, browser, tmp_path):
+    ws = seed_workspace(live_daemon, "gh-e2e", make_ws_dir(tmp_path, "gh-e2e"))
+    resp = put_json(
+        live_daemon,
+        "/api/plugins/github/config",
+        {
+            "workspace": ws,
+            "structured": {
+                "repo": "octocat/Hello-World",
+                "poll_interval_s": 60,
+                "rules": [
+                    {
+                        "name": "pr-opened",
+                        "when": {"event": "PullRequestEvent", "action": "opened"},
+                        "do": [
+                            {
+                                "agent.message": {
+                                    "to": "reviewer",
+                                    "body": "Review PR #{{ pull_request.number }}",
+                                }
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+    assert resp.get("ok") is True, resp
+
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    msgs = []
+    page.on("console", lambda m: msgs.append(m))
+    try:
+        page.goto(f"{live_daemon}/?lens=github")
+        page.wait_for_selector(".gh-wrap", timeout=15000)
+        page.wait_for_selector('.pl-nav-item:has-text("gh-e2e")', timeout=10000)
+        page.click('.pl-nav-item:has-text("gh-e2e")')
+        page.wait_for_selector(".gh-workspace-detail", timeout=10000)
+        page.wait_for_selector('.gh-editor input[placeholder="owner/repo"]', timeout=10000)
+        page.wait_for_selector(".gh-flow", timeout=10000)
+
+        active = page.eval_on_selector(
+            '.pl-nav-item:has-text("gh-e2e")',
+            "e => e.classList.contains('active')",
+        )
+        assert active
+        assert "PullRequestEvent" in page.inner_text(".gh-flow")
+        page.wait_for_selector(".gh-vars", timeout=10000)
+        assert "pull_request.number" in page.inner_text(".gh-vars")
+        page.click(".gh-act textarea")
+        page.click('.gh-var:has-text("pull_request.title")')
+        body = page.eval_on_selector(".gh-act textarea", "e => e.value")
+        assert "{{ pull_request.title }}" in body
+        action_types = page.eval_on_selector_all(
+            ".gh-act .ah select option",
+            "els => els.map(e => e.value)",
+        )
+        assert {"agent.message", "model", "code", "bus.emit"}.issubset(set(action_types))
+        bad = errors(msgs)
+        assert not bad, "console errors on GitHub workspace rule builder:\n" + "\n".join(bad)
     finally:
         ctx.close()
 

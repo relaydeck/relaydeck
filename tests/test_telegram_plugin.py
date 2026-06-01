@@ -462,6 +462,121 @@ def test_parse_table_accepts_require_mention():
     assert table.routes[0].require_mention is True
 
 
+def _telegram_ctx(
+    *,
+    chat_id: int = -100,
+    body: str = "hello",
+    mention_ok: bool = False,
+    mentions_bot: bool = False,
+) -> dict:
+    return {
+        "chat_id": chat_id,
+        "chat_type": "supergroup",
+        "chat_title": "Ops",
+        "chat_username": "",
+        "thread_id": None,
+        "user_id": 123,
+        "user_name": "alice",
+        "message_id": 7,
+        "is_private": False,
+        "mention_ok": mention_ok,
+        "mentions_bot": mentions_bot,
+        "command": None,
+        "body": body,
+        "reactions_enabled": False,
+        "bot": None,
+        "raw_message": None,
+    }
+
+
+def _loaded_telegram_plugin(tmp_path):
+    from plugins.telegram.plugin import TelegramPlugin
+    from relaydeck.testing import MockHost
+
+    cfg_home = tmp_path / ".relaydeck"
+    cfg_home.mkdir(parents=True)
+    plugin = TelegramPlugin()
+    host = MockHost(name="telegram", config_home=cfg_home)
+    host.add_agent(id="agent-a", workspace="w", status="running")
+    plugin.on_load(host)
+    plugin._react = lambda *a, **kw: None
+    plugin._maybe_start_typing = lambda *a, **kw: None
+    return plugin, host
+
+
+def test_route_can_relax_global_group_mention_requirement(tmp_path):
+    plugin, host = _loaded_telegram_plugin(tmp_path)
+    plugin.table = RouteTable(
+        allowed_groups={-100},
+        routes=[Route(workspace="w", chat_id=-100, agent="agent-a", require_mention=False)],
+    )
+
+    plugin._handle_inbound(_telegram_ctx(mention_ok=False, mentions_bot=False))
+
+    assert host.memory_orchestrator.sent
+    assert host.memory_orchestrator.sent[0]["to"] == "agent-a"
+
+
+def test_route_can_require_group_mention_when_global_setting_is_relaxed(tmp_path):
+    plugin, host = _loaded_telegram_plugin(tmp_path)
+    plugin.table = RouteTable(
+        allowed_groups={-100},
+        routes=[Route(workspace="w", chat_id=-100, agent="agent-a", require_mention=True)],
+    )
+
+    plugin._handle_inbound(_telegram_ctx(mention_ok=True, mentions_bot=False))
+    assert host.memory_orchestrator.sent == []
+
+    plugin._handle_inbound(_telegram_ctx(mention_ok=True, mentions_bot=True))
+    assert len(host.memory_orchestrator.sent) == 1
+    assert host.memory_orchestrator.sent[0]["to"] == "agent-a"
+
+
+def test_auto_allow_route_chats_ignores_outbound_only_routes():
+    from plugins.telegram.plugin import TelegramPlugin
+
+    plugin = TelegramPlugin()
+    plugin.table = RouteTable(routes=[
+        Route(workspace="w", chat_id=123, direction="out"),
+        Route(workspace="w", chat_id=-100, direction="in"),
+        Route(workspace="w", chat_id=-200, direction="in+out"),
+    ])
+
+    assert plugin._auto_allow_route_chats() is True
+    assert 123 not in plugin.table.allowed_users
+    assert plugin.table.allowed_groups == {-100, -200}
+
+
+def test_status_snapshot_does_not_mark_disabled_connection_as_worker_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    from plugins.telegram import plugin as telegram_plugin
+    from plugins.telegram.plugin import TelegramPlugin
+    from plugins.telegram.routes import Connection, RouteTable, save_table
+    from plugins.vault import plugin as vault_plugin
+    from relaydeck.testing import MockHost
+
+    cfg_home = tmp_path / ".relaydeck"
+    cfg_home.mkdir(parents=True)
+    monkeypatch.setattr(vault_plugin, "_vault", None)
+    vault_plugin.set_secret("TG_DISABLED", "111:aaa")
+    save_table(cfg_home, RouteTable(
+        connections=[
+            Connection(id="disabled", token_vault_key="TG_DISABLED", enabled=False),
+        ],
+    ))
+    monkeypatch.setattr(telegram_plugin, "_running_as_daemon", lambda: True)
+
+    plugin = TelegramPlugin()
+    host = MockHost(name="telegram", config_home=cfg_home)
+    plugin.on_load(host)
+
+    snap = plugin.status_snapshot()
+    conn = snap["connections"][0]
+    assert conn["enabled"] is False
+    assert conn["stub_reason"] is None
+    assert snap["errored"] is False
+
+
 def test_worker_info_exposes_health_fields():
     """info() carries last_update_ts + last_error for the dashboard health
     line (constructible without PTB)."""
@@ -636,6 +751,35 @@ def test_open_access_setting_flows_to_table(tmp_path, monkeypatch):
               if r["path"] == "/config" and "GET" in r["methods"])
     cfg = asyncio.run(get())
     assert cfg["open_access"] is True
+
+
+def test_bool_settings_preserve_explicit_false(tmp_path, monkeypatch):
+    """False is a meaningful Telegram setting value; it must not be folded
+    through `value or True` back to the default."""
+    import asyncio
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    from plugins.telegram.plugin import TelegramPlugin, _bool_setting
+    from relaydeck.plugin_settings import set_settings
+    from relaydeck.testing import MockHost
+
+    cfg_home = tmp_path / ".relaydeck"
+    cfg_home.mkdir(parents=True)
+    set_settings("telegram", {
+        "require_mention_in_groups": False,
+        "reactions": False,
+        "typing_indicator": False,
+    })
+    plugin = TelegramPlugin()
+    host = MockHost(name="telegram", config_home=cfg_home)
+    plugin.on_load(host)
+
+    get = next(r["handler"] for r in host.api.routes
+              if r["path"] == "/config" and "GET" in r["methods"])
+    cfg = asyncio.run(get())
+    assert cfg["require_mention_in_groups"] is False
+    assert cfg["reactions"] is False
+    assert _bool_setting(host, "typing_indicator", True) is False
 
 
 # ── daemon-only worker guard (getUpdates Conflict prevention) ───────

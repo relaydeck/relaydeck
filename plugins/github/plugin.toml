@@ -37,7 +37,7 @@ declared_capabilities = [
 ]
 
 [plugin.settings]
-poll_interval_seconds = { type = "number", default = 30.0, description = "Seconds between `gh api repos/{repo}/events` polls. Per-workspace override via github.yaml `poll_interval_s`." }
+poll_interval_seconds = { type = "number", default = 30.0, description = "Seconds between `gh api repos/{repo}/events` polls. Workspaces can override this in their GitHub routing settings." }
 gh_binary = { type = "string", default = "gh", description = "Path to the gh CLI binary. Default uses whatever is on PATH." }
 
 [plugin.ui]

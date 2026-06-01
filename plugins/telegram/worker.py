@@ -532,16 +532,20 @@ class TelegramWorker:
         if chat is None or user is None:
             return
 
-        # Mention requirement (groups only). The caller-side router
-        # may override this per-route; here we apply the global
-        # default. In DMs (chat.type == 'private') we accept any text.
+        # Mention requirement (groups only). We expose both the raw
+        # addressed-to-bot signal and the global default decision so
+        # plugin-side route overrides can tighten or relax the gate.
+        # In DMs (chat.type == 'private') we accept any text.
         is_private = chat.type == "private"
-        mention_ok = True
-        if not is_private and self._require_mention and command is None:
-            mention_ok = message_mentions_bot(body, self._bot_username) or (
+        mentions_bot = False
+        if not is_private and command is None:
+            mentions_bot = message_mentions_bot(body, self._bot_username) or (
                 msg.reply_to_message is not None
                 and getattr(msg.reply_to_message.from_user, "id", None) == self._bot_id
             )
+        mention_ok = True
+        if not is_private and command is None:
+            mention_ok = (not self._require_mention) or mentions_bot
 
         ctx = {
             "chat_id": chat.id,
@@ -554,6 +558,7 @@ class TelegramWorker:
             "message_id": msg.message_id,
             "is_private": is_private,
             "mention_ok": mention_ok,
+            "mentions_bot": mentions_bot,
             "command": command,
             "body": _strip_bot_mention(body, self._bot_username) if not command else body,
             "reactions_enabled": self._reactions,

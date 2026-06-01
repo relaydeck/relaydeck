@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from relaydeck.automation import ActionContext, ActionError, dispatch
+from relaydeck.automation.actions import _HANDLERS
 from plugins.github import poller
 from plugins.github.plugin import GithubPlugin, _workspace_has_github
 from plugins.github.poller import (
@@ -39,6 +41,23 @@ from plugins.github.rules import (
     render,
 )
 from relaydeck.testing import MockHost
+
+
+def test_github_panel_surfaces_all_dispatcher_actions():
+    panel = Path("plugins/github/static/panel.js").read_text()
+    for kind in _HANDLERS:
+        assert f"'{kind}'" in panel
+    for token in (
+        "pull_request.number",
+        "issue.title",
+        "comment.html_url",
+        "pages[0].title",
+        "release.tag_name",
+    ):
+        assert token in panel
+    assert "_templateSheet" in panel
+    assert "_insertTemplate" in panel
+
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -561,6 +580,31 @@ def test_cursor_round_trip(tmp_path):
 
 def test_cursor_missing_returns_empty(tmp_path):
     assert load_cursor(tmp_path / "missing.json").last_event_id is None
+
+
+def test_poller_select_new_compares_numeric_event_ids(tmp_path):
+    p = GithubPoller(
+        workspace="demo",
+        config_home=tmp_path,
+        workspace_path=None,
+        bus=None,
+        send_message=None,
+        emit_event=None,
+    )
+    events = [{"id": "10000"}, {"id": "9998"}]
+    assert p._select_new(events, "9999") == [{"id": "10000"}]
+
+
+def test_poller_latest_event_id_uses_numeric_order(tmp_path):
+    p = GithubPoller(
+        workspace="demo",
+        config_home=tmp_path,
+        workspace_path=None,
+        bus=None,
+        send_message=None,
+        emit_event=None,
+    )
+    assert p._latest_event_id([{"id": "9999"}, {"id": "10000"}]) == "10000"
 
 
 # ── Poller: dedup + restart ───────────────────────────────────────

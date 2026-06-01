@@ -94,6 +94,13 @@ const CSS = `
   .tg-route .x button{font:inherit;background:transparent;border:1px solid var(--line-2);color:var(--t-2);border-radius:3px;padding:2px 7px;font-size:10px;cursor:pointer}
   .tg-route .x button:hover{color:var(--t-1);border-color:var(--line-3)}
   .tg-route .x button.danger:hover{color:var(--err);border-color:var(--err)}
+  .tg-route-visual{grid-column:span 4;display:grid;grid-template-columns:minmax(0,1fr) 32px minmax(0,1fr) 32px minmax(0,1fr);gap:8px;align-items:stretch;margin-bottom:2px}
+  .tg-route-visual .node{border:1px solid var(--line-1);background:var(--bg-1);border-radius:5px;padding:8px 10px;min-width:0}
+  .tg-route-visual .node .k{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t-4);margin-bottom:4px}
+  .tg-route-visual .node .v{font-size:var(--t-xs);color:var(--t-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tg-route-visual .node .s{font-size:10px;color:var(--t-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tg-route-visual .arr{display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:18px}
+  @media (max-width: 900px){.tg-route-visual{grid-template-columns:1fr}.tg-route-visual .arr{height:20px;transform:rotate(90deg)}}
 
   .tg-allow{padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
   .tg-allow .chip{font-family:var(--f-mono);font-size:var(--t-xxs);background:var(--bg-2);border:1px solid var(--line-2);padding:2px 8px;border-radius:var(--r-1);color:var(--t-2);display:inline-flex;align-items:center;gap:6px}
@@ -445,8 +452,7 @@ export default class TelegramLens {
               (<code>/newbot</code> → follow prompts → copy the API token), paste it
               below. You can optionally seed a Telegram user ID who can DM the bot;
               routes added later will allowlist their chat automatically.
-              The token is stored in the daemon's vault — it never sits in a
-              plain-text config file.
+              The token is stored in the daemon vault and never shown again.
             </div>
             <label><span>Bot token</span><input data-f="token" type="password" placeholder="123456789:AAH..." autocomplete="off" spellcheck="false"></label>
             <label><span>Allow user ID (optional — find via @userinfobot)</span><input data-f="user" inputmode="numeric" placeholder="e.g. 12345678"></label>
@@ -775,7 +781,7 @@ export default class TelegramLens {
         </div>
         <div class="body">
           ${routes.length === 0
-            ? html`<div class="tg-empty">No routes. Click <b>+ Add route</b> to wire a chat to a workspace, or edit <code>~/.relaydeck/telegram.yaml</code> directly.</div>`
+            ? html`<div class="tg-empty">No routes. Click <b>+ Add route</b> to wire a Telegram chat, command, or topic to a workspace agent.</div>`
             : routes.map((r, i) => this._routeRow(r, i))}
         </div>
         ${this._routeForm ? this._routeFormTemplate() : nothing}
@@ -797,6 +803,7 @@ export default class TelegramLens {
         </div>
         <div class="x">
           <button data-act="test" @click=${() => this._testRoute(r)}>test</button>
+          <button data-act="edit" @click=${() => this._openRouteForm(r, i)}>edit</button>
           <button class="danger" data-act="rm" @click=${() => this._removeRoute(i)}>remove</button>
         </div>
       </div>`;
@@ -872,7 +879,7 @@ export default class TelegramLens {
 
   // Open the add-route form, loading workspaces + agents first. Drives a
   // reactive draft (this._routeForm) instead of imperative querySelector wiring.
-  async _openRouteForm(prefill = {}) {
+  async _openRouteForm(prefill = {}, editIndex = null) {
     const catalog = this._chatCatalog();
     const [workspaces, agents] = await Promise.all([
       this.api.getJSON('/api/workspaces').catch(() => []),
@@ -903,7 +910,7 @@ export default class TelegramLens {
     else if (prefill.require_mention === false) requireMention = 'false';
 
     this._routeForm = {
-      catalog, workspaces: workspaces || [], agents: agents || [], prefill,
+      catalog, workspaces: workspaces || [], agents: agents || [], prefill, editIndex,
       draft: {
         chatPick,
         connection: chatPick === '__any__' ? '' : (prefill.connection || ''),
@@ -939,6 +946,50 @@ export default class TelegramLens {
     const f = this._routeForm; if (!f) return [];
     const ws = f.draft.workspace;
     return (f.agents || []).filter(a => !ws || (a.workspace || '') === ws);
+  }
+
+  _routePreviewTemplate() {
+    const f = this._routeForm;
+    if (!f) return nothing;
+    const d = f.draft;
+    const picked = this._routePickedRow();
+    const chat = d.chatPick === '__any__'
+      ? 'Any chat'
+      : (picked ? picked.label : (d.chatId ? `chat ${d.chatId}` : 'Select a chat'));
+    const topic = d.threadPick === '__custom__'
+      ? (d.threadManual ? `topic #${d.threadManual}` : 'custom topic')
+      : (d.threadPick ? `topic #${d.threadPick}` : 'any topic');
+    const command = d.cmdPick === '__custom__'
+      ? (d.cmdCustom ? `/${d.cmdCustom.replace(/^\//, '')}` : 'custom command')
+      : (d.cmdPick ? `/${d.cmdPick}` : 'any message');
+    const bot = d.connection
+      ? (this.connections || []).find(c => c.id === d.connection)
+      : null;
+    const botLabel = bot ? this._connLabel(bot) : (d.connection ? d.connection : 'any bot');
+    const target = d.workspace
+      ? `${d.workspace}${d.agent ? ' / ' + d.agent : ' / all agents'}`
+      : 'Select workspace';
+    const dir = d.direction || 'in+out';
+    return html`
+      <div class="tg-route-visual">
+        <div class="node">
+          <div class="k">From Telegram</div>
+          <div class="v">${chat}</div>
+          <div class="s">${botLabel}${topic !== 'any topic' ? ' · ' + topic : ''}</div>
+        </div>
+        <div class="arr">→</div>
+        <div class="node">
+          <div class="k">Match</div>
+          <div class="v">${command}</div>
+          <div class="s">${dir}</div>
+        </div>
+        <div class="arr">→</div>
+        <div class="node">
+          <div class="k">Relaydeck</div>
+          <div class="v">${target}</div>
+          <div class="s">${d.requireMention === 'true' ? 'mention required' : d.requireMention === 'false' ? 'mention relaxed' : 'mention inherits default'}</div>
+        </div>
+      </div>`;
   }
 
   _routeFormTemplate() {
@@ -980,6 +1031,7 @@ export default class TelegramLens {
 
     return html`
       <div class="tg-row-form tg-route-form">
+        ${this._routePreviewTemplate()}
         <label class="span2"><span>chat</span>
           <select data-f="chat_pick" .value=${d.chatPick} @change=${onChatPick}>
             <option value="" ?selected=${d.chatPick === ''}>— select chat —</option>
@@ -1053,13 +1105,14 @@ export default class TelegramLens {
         </label>
         <div class="full">
           <button class="btn ghost sm" data-act="cancel" @click=${() => this._closeRouteForm()}>Cancel</button>
-          <button class="btn primary sm" data-act="save" @click=${() => this._submitRoute()}>Add route</button>
+          <button class="btn primary sm" data-act="save" @click=${() => this._submitRoute()}>${f.editIndex != null ? 'Save route' : 'Add route'}</button>
         </div>
       </div>`;
   }
 
   _submitRoute() {
-    const d = this._routeForm.draft;
+    const form = this._routeForm;
+    const d = form.draft;
     // chat_id resolution lives in conversations.js (node-tested) — when a real
     // chat is picked the catalog row is authoritative, not the hidden manual field.
     const resolved = resolveRouteChatId(d, this._routePickedRow());
@@ -1090,7 +1143,11 @@ export default class TelegramLens {
     };
     if (d.requireMention === 'true') row.require_mention = true;
     else if (d.requireMention === 'false') row.require_mention = false;
-    this.routes.routes.push(row);
+    if (form.editIndex != null && form.editIndex >= 0 && form.editIndex < this.routes.routes.length) {
+      this.routes.routes.splice(form.editIndex, 1, row);
+    } else {
+      this.routes.routes.push(row);
+    }
     if (Number.isFinite(chat_id)) {
       const key = chat_id < 0 ? 'allowed_groups' : 'allowed_users';
       if (!this.routes[key].includes(chat_id)) this.routes[key].push(chat_id);
@@ -1336,7 +1393,7 @@ export default class TelegramLens {
               </div>
             </div>
             <div class="row">
-              <div><div class="lbl">Vault keys</div><div class="desc">Where the bot token + webhook secret live in <code>~/.relaydeck/vault.yaml</code>.</div></div>
+              <div><div class="lbl">Vault keys</div><div class="desc">Where the bot token and webhook secret are stored.</div></div>
               <div></div>
               <div class="ctrl" style="font-family:var(--f-mono);font-size:var(--t-xxs);color:var(--t-3)">
                 ${s.bot_token_vault_key || ''} ${s.has_bot_token ? html`<span style="color:var(--ok)">●</span>` : html`<span style="color:var(--err)">●</span>`} ·

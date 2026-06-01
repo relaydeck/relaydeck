@@ -2067,6 +2067,7 @@ def create_app(config_home: Path | None = None) -> FastAPI:
             wp = Path(entry.path).expanduser()
             git = wt.workspace_git_info(wp, config_home=home)
             changes = wt.git_status_lines(wp) if git.get("is_git") else []
+            diff_files = wt.git_diff_file_list(wp) if git.get("is_git") else []
             repo_root = git.get("repo_root")
             repo_workspaces = (
                 wt.repo_workspace_rows(home, repo_root, current=name)
@@ -2085,9 +2086,36 @@ def create_app(config_home: Path | None = None) -> FastAPI:
                 "path": str(wp),
                 "git": git,
                 "changes": changes,
+                "diff_files": diff_files,
                 "repo_workspaces": repo_workspaces,
                 "git_worktrees": git_worktrees,
             }
+
+        return await asyncio.to_thread(_build)
+
+    @app.get("/api/workspaces/{name}/git-diff")
+    async def workspace_git_diff(name: str, path: str = Query(..., description="Repo-relative file path")):
+        """Unified diff for one file (GitHub-style Changes tab)."""
+        import asyncio
+
+        from relaydeck import worktrees as wt
+        from relaydeck.config import load_workspace_registry
+
+        registry = load_workspace_registry(home)
+        entry = next((w for w in registry if w.name == name), None)
+        if entry is None:
+            raise HTTPException(404, f"no such workspace: {name}")
+        if not path.strip():
+            raise HTTPException(400, "path query parameter is required")
+
+        def _build():
+            wp = Path(entry.path).expanduser()
+            if not wt.is_git_repo(wp):
+                raise HTTPException(400, "workspace is not a git repository")
+            try:
+                return wt.git_file_diff(wp, path)
+            except wt.WorktreeError as exc:
+                raise HTTPException(400, str(exc)) from exc
 
         return await asyncio.to_thread(_build)
 

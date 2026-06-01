@@ -429,6 +429,117 @@ def git_worktree_rows(repo_root: Path, *, config_home: Path | None = None) -> li
     return rows
 
 
+_MAX_DIFF_LINES = 500
+
+
+def _status_from_porcelain(code: str) -> str:
+    if code.startswith("?") or code == "??":
+        return "untracked"
+    if "D" in code:
+        return "deleted"
+    if "A" in code:
+        return "added"
+    if "R" in code or "C" in code:
+        return "renamed"
+    return "modified"
+
+
+def git_diff_file_list(path: Path, *, limit: int = 100) -> list[dict[str, Any]]:
+    """Changed paths with status + line counts (index for the Files tab)."""
+    import contextlib
+
+    path = path.expanduser()
+    numstat: dict[str, tuple[int, int]] = {}
+    with contextlib.suppress(WorktreeError):
+        for line in _git(path, "diff", "--numstat", "HEAD").splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            fp = parts[2]
+            if parts[0] == "-" or parts[1] == "-":
+                numstat[fp] = (0, 0)
+                continue
+            ins = int(parts[0]) if parts[0].isdigit() else 0
+            dele = int(parts[1]) if parts[1].isdigit() else 0
+            numstat[fp] = (ins, dele)
+    rows: list[dict[str, Any]] = []
+    for sl in git_status_lines(path, limit=limit):
+        raw_path = sl["path"]
+        display = raw_path.split(" -> ", 1)[-1].strip() if " -> " in raw_path else raw_path
+        ins, dele = numstat.get(raw_path, numstat.get(display, (0, 0)))
+        if sl["code"].startswith("?"):
+            with contextlib.suppress(OSError):
+                fp = path / display
+                if fp.is_file():
+                    ins = sum(1 for _ in fp.read_text(encoding="utf-8", errors="replace").splitlines())
+                    dele = 0
+        rows.append({
+            "path": display,
+            "status": _status_from_porcelain(sl["code"]),
+            "additions": ins,
+            "deletions": dele,
+        })
+    return rows
+
+
+def _parse_unified_diff(raw: str, *, max_lines: int = _MAX_DIFF_LINES) -> dict[str, Any]:
+    """Parse unified diff text into hunks for the dashboard diff viewer."""
+    hunks: list[dict[str, Any]] = []
+    cur: dict[str, Any] | None = None
+    line_count = 0
+    binary = "Binary files" in raw or "binary files" in raw.lower()
+    for line in raw.splitlines():
+        if line_count >= max_lines:
+            break
+        if line.startswith("@@"):
+            if cur:
+                hunks.append(cur)
+            cur = {"header": line, "lines": []}
+            line_count += 1
+            continue
+        if line.startswith(("diff --git", "index ", "---", "+++")):
+            continue
+        if cur is None:
+            continue
+        kind, text = "ctx", line
+        if line.startswith("+") and not line.startswith("+++"):
+            kind, text = "add", line[1:]
+        elif line.startswith("-") and not line.startswith("---"):
+            kind, text = "del", line[1:]
+        elif line.startswith(" "):
+            kind, text = "ctx", line[1:]
+        elif line.startswith("\\"):
+            kind, text = "meta", line
+        cur["lines"].append({"kind": kind, "text": text})
+        line_count += 1
+    if cur:
+        hunks.append(cur)
+    return {"hunks": hunks, "truncated": line_count >= max_lines, "binary": binary}
+
+
+def git_file_diff(path: Path, file_path: str, *, max_lines: int = _MAX_DIFF_LINES) -> dict[str, Any]:
+    """Unified diff for one path (GitHub-style file view)."""
+    import contextlib
+
+    path = path.expanduser().resolve()
+    file_path = file_path.strip().lstrip("./")
+    if not file_path or ".." in Path(file_path).parts:
+        raise WorktreeError("invalid path")
+    target = (path / file_path).resolve()
+    if not str(target).startswith(str(path)):
+        raise WorktreeError("invalid path")
+    raw = ""
+    with contextlib.suppress(WorktreeError):
+        raw = _git(path, "diff", "HEAD", "--", file_path)
+    if not raw.strip() and target.is_file():
+        with contextlib.suppress(WorktreeError):
+            raw = _git(path, "diff", "--no-index", "/dev/null", file_path)
+    if not raw.strip():
+        return {"path": file_path, "hunks": [], "binary": False, "empty": True, "truncated": False}
+    parsed = _parse_unified_diff(raw, max_lines=max_lines)
+    return {"path": file_path, "empty": False, **parsed}
+
+
 def git_status_lines(path: Path, *, limit: int = 120) -> list[dict[str, str]]:
     """Porcelain `git status` lines for a vim-style change log in the UI."""
     import contextlib

@@ -25,7 +25,7 @@ def _resolve_version() -> str:
             pass
     except Exception:
         pass
-    return "0.1.2"
+    return "0.1.3"
 
 
 __version__ = _resolve_version()

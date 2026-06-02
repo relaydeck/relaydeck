@@ -332,6 +332,43 @@ def test_opencode_usage_tailer_reads_global_db(tmp_path, monkeypatch):
     assert seen[0]["provider"] == "openrouter"
 
 
+def test_opencode_usage_seed_skips_replay_on_restart(tmp_path, monkeypatch):
+    """A restart must not re-emit history. record_usage is append-only with no
+    dedup, so seeding the watermark to the newest existing row is what keeps a
+    relaunched agent from double-counting prior tokens/cost."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    agent = _make_agent(tmp_path, monkeypatch)
+    repo = tmp_path / "repo"
+    global_db = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    _seed_opencode_db(global_db, str(repo.resolve()))
+    seen: list[dict] = []
+    agent._emit_bus = lambda _t, d: seen.append(d)  # type: ignore[method-assign]
+
+    # Simulates relaunch against a DB that already has a historical turn.
+    agent._seed_usage_watermarks()
+    agent._scan_usage_dbs()
+    assert seen == []  # no replay of the pre-existing msg_1
+
+    # A turn produced *after* the restart is still metered.
+    import sqlite3
+    conn = sqlite3.connect(global_db)
+    try:
+        conn.execute(
+            "INSERT INTO message VALUES (?,?,?,?,?)",
+            ("msg_2", "ses_1", 1600, 1600, json.dumps({
+                "role": "assistant",
+                "tokens": {"input": 7, "output": 3},
+                "modelID": "m", "providerID": "p",
+            })),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    agent._scan_usage_dbs()
+    assert len(seen) == 1
+    assert seen[0]["prompt"] == 7
+
+
 def test_opencode_usage_watermark_skips_history(tmp_path):
     db = tmp_path / "opencode.db"
     _seed_opencode_db(db, "/ws")

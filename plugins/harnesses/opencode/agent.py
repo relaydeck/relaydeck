@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import sqlite3
-import time
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -144,13 +143,15 @@ class OpenCodeAgent(HarnessAgent):
         return out
 
     def _seed_usage_watermarks(self) -> None:
-        cutoff_ms = int((time.time() - 86400) * 1000)
+        # Seed to the newest row already in each DB so a restart only emits
+        # assistant turns created *after* this agent (re)starts — parity with
+        # pi/codex seeding tail offsets to current file size. The watermark
+        # lives only in memory, so a 24h backfill here would re-emit history on
+        # every restart, and `record_usage` is an append-only INSERT with no
+        # message-id dedup → that would double-count tokens/cost per restart.
         for db_path, directory in self._usage_sources():
             key = str(db_path)
-            latest = _opencode_usage_watermark(db_path, directory)
-            # Replay the last 24h on start so the stat strip catches up after
-            # metering was enabled; steady-state ticks only advance the watermark.
-            self._usage_watermarks[key] = min(latest, cutoff_ms) if latest else 0
+            self._usage_watermarks[key] = _opencode_usage_watermark(db_path, directory)
 
     def _scan_usage_dbs(self) -> None:
         for db_path, directory in self._usage_sources():

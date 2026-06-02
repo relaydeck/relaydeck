@@ -47,6 +47,30 @@ does not call GitHub on every page load.
   `uv tool install --reinstall relaydeck` (re-pins the source to PyPI), or just
   re-run `install.sh`.
 
+### Known gotcha: upgrading from a pre-0.1.3 build
+
+Two bugs in `< 0.1.3` make the in-app "Update now" banner misbehave; both are
+fixed in 0.1.3, so this only affects users who installed 0.1.0–0.1.2 before
+0.1.3 was the latest release:
+
+- **Workspace collapses when the banner shows.** The pre-0.1.3 app shell was a
+  3-row CSS grid; the update banner became a 4th child and stole the main row,
+  shrinking the workspace to ~26px (looks blank). Dismiss the banner (`×`) to
+  restore the layout, or update. Fixed in 0.1.3 (flex shell).
+- **"Update now" no-ops on a *pinned* install.** Pre-0.1.3 ran
+  `uv tool upgrade relaydeck`, which does nothing when the tool was installed
+  with a version pin (e.g. `uv tool install relaydeck==0.1.2`) — the daemon
+  restarts but stays on the old version. `install.sh` installs **unpinned**, so
+  a normal install's "Update now" upgrades fine; only an explicit `==x.y.z`
+  install is affected. Fixed in 0.1.3 (`uv tool install --reinstall`).
+
+If you land in either state, the one-line escape hatch is:
+
+```sh
+uv tool install --reinstall relaydeck   # ignores any pin, pulls latest
+relaydeck daemon stop && relaydeck daemon start
+```
+
 ## Recommended GitHub repo hardening
 
 These are settings, not code — apply them in the repo's Settings after the repo

@@ -1,34 +1,39 @@
-// tiles/context.js — per-session context usage for an agent.
+// tiles/context.js — the agent's context window, at a glance.
 //
-// The context a model carries each turn is the prompt_tokens it's sent
-// (system prompt + accumulated history + tool defs), so the LATEST turn's
-// prompt_tokens is the thread's *current context fill*. This tab lists the
-// agent's sessions/threads with their current + peak context, turns, total
-// tokens spent, and model — real data from GET /api/agents/{id}/sessions
-// (usage_records). No model context-window limit is assumed; bars scale
-// relative to the busiest thread. Live: re-fetches on usage events.
+// Two columns. Left: the context-window meter (limit from models.dev) + the
+// effective-context preview (what the model sees — the composed system-prompt
+// components). Right: the composition broken into contributing layers with
+// token counts + %. Data from GET /api/agents/{id}/context.
 //
-// REFERENCE-STYLE MIGRATION (read-only, single live resource) — same shape as
-// tiles/config.js: RelayElement (light DOM) + LiveController (auto-unsubscribe)
-// + defineTile() for the legacy mount/unmount contract. render() returns a Lit
-// template (no innerHTML, no querySelector). The one-time `.ctx` CSS injection
-// and `.cs-*` row markup are preserved verbatim for theming + e2e selectors.
+// REFERENCE-STYLE (read-only, single live resource): RelayElement (light DOM)
+// + LiveController (auto-unsubscribe) + defineTile() for the mount contract.
 
 import {
-  RelayElement, defineTile, LiveController, html, nothing,
-  fmtNum, fmtCost, relTime,
+  RelayElement, defineTile, LiveController, html, nothing, fmtNum,
 } from '@relaydeck/ui';
+
+// Layer key → accent. Muted/neutral for "free".
+const LAYER_COLOR = {
+  system: 'var(--acc)',
+  memory: '#c98a3a',
+  skills: '#5a9e6f',
+  convo:  '#8a6fc9',
+  free:   'var(--line-2)',
+};
 
 class ContextTile extends RelayElement {
   static properties = {
     agent: { attribute: false },
+    _showAll: { state: true },
+    _raw: { state: true },
   };
 
   constructor() {
     super();
     this.agent = {};
-    // Subscribed lazily once the agent id arrives (see willUpdate).
-    this._sessions = new LiveController(this);
+    this._showAll = false;
+    this._raw = false;
+    this._ctx = new LiveController(this);
   }
 
   connectedCallback() {
@@ -38,91 +43,227 @@ class ContextTile extends RelayElement {
 
   willUpdate(changed) {
     if (changed.has('agent') && this.agent?.id) {
-      this._sessions.setKey(`/api/agents/${encodeURIComponent(this.agent.id)}/sessions`);
+      this._ctx.setKey(`/api/agents/${encodeURIComponent(this.agent.id)}/context`);
     }
   }
 
-  _row(s, peak) {
-    const cur = s.current_context || 0;
-    const pk = s.peak_context || 0;
-    const pct = Math.min(100, Math.round((cur / peak) * 100));
-    const pkPct = Math.min(100, Math.round((pk / peak) * 100));
-    const label = s.label || s.session_id || 'session';
-    // Lit auto-escapes interpolations, so values go in raw (no esc()).
+  _effectiveText(components) {
+    return (components || []).map((c) => `<${c.label}>\n${c.text || ''}`).join('\n\n');
+  }
+
+  _export(components) {
+    const blob = new Blob([this._effectiveText(components)], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${this.agent?.id || 'agent'}-context.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // A share that never reads as a flat "0%" for a real-but-tiny value.
+  _pct(p) {
+    if (p >= 1) return `${Math.round(p)}%`;
+    if (p > 0) return p >= 0.1 ? `${p.toFixed(1)}%` : '<0.1%';
+    return '0%';
+  }
+
+  // ── left: context-window meter ────────────────────────────────────
+  _windowCard(d) {
+    const window = d.window;
+    const used = d.used || 0;
+    const usedPct = window ? (used / window) * 100 : null;
+    // Stacked segments for the non-free layers, then free fills the rest.
+    const denom = window || Math.max(1, used);
+    const segs = (d.layers || [])
+      .filter((l) => l.key !== 'free' && l.tokens > 0)
+      .map((l) => html`<span class="cx-seg-fill" style="width:${(l.tokens / denom) * 100}%;background:${LAYER_COLOR[l.key]}" title="${l.label}: ${fmtNum(l.tokens)}"></span>`);
     return html`
-      <div class="cs-row">
-        <div class="cs-top">
-          <span class="cs-label" title=${s.session_id ?? ''}>${label}</span>
-          <span class="cs-cur">${fmtNum(cur)} <span class="dim">tok ctx</span></span>
+      <div class="cx-card">
+        <div class="cx-head">
+          <div class="cx-eyebrow">context window ${d.model ? html`· <span class="acc">${d.model}</span>` : nothing}</div>
+          <div class="cx-chips">
+            <span class="cx-chip">used ${fmtNum(used)}</span>
+            ${window ? html`<span class="cx-chip">free ${fmtNum(d.free)}</span>` : nothing}
+            ${usedPct != null ? html`<span class="cx-chip ${usedPct >= 80 ? 'warn' : 'acc'}">${this._pct(usedPct)}</span>` : nothing}
+          </div>
         </div>
-        <div class="cs-bar"><span class="cs-peak" style="width:${pkPct}%"></span><span class="cs-fill" style="width:${pct}%"></span></div>
-        <div class="cs-meta">
-          <span>${fmtNum(s.turns)} turns</span>
-          <span>peak ${fmtNum(pk)}</span>
-          <span>${fmtNum(s.total_tokens)} total</span>
-          ${s.cost_usd ? html`<span>${fmtCost(s.cost_usd)}</span>` : nothing}
-          ${s.model ? html`<span class="cs-model">${s.model}</span>` : nothing}
-          <span class="cs-when dim">${s.last_ts ? relTime(s.last_ts * 1000) : ''}</span>
+        ${window
+          ? html`<div class="cx-sub">${fmtNum(window)} token window</div>`
+          : html`<div class="cx-sub dim">model not catalogued — window unknown, showing used only</div>`}
+        <div class="cx-meter">${segs}</div>
+        ${window ? html`
+          <div class="cx-axis">
+            <span>0</span><span>${fmtNum(window * 0.25)}</span><span>${fmtNum(window * 0.5)}</span>
+            <span>${fmtNum(window * 0.75)}</span><span>${fmtNum(window)}</span>
+          </div>` : nothing}
+      </div>`;
+  }
+
+  // One preview section. For skills, the frontmatter (always in context) is
+  // shown highlighted as "loaded" and the body — read on demand when the agent
+  // invokes the skill — is dimmed, so it's clear what actually costs context.
+  _block(c) {
+    const isSkill = String(c.label || '').startsWith('skill · ');
+    const text = c.text || '';
+    const cap = (s) => (!this._showAll && s.length > 600 ? s.slice(0, 600) + '…' : s);
+    if (isSkill && c.meta_chars != null) {
+      const meta = text.slice(0, c.meta_chars);
+      const body = text.slice(c.meta_chars).replace(/^\n+/, '');
+      return html`
+        <div class="cx-block">
+          <div class="cx-tag">&lt;${c.label}&gt;
+            <span class="dim">${fmtNum(c.loaded_tokens)} tok loaded · ${fmtNum(c.ondemand_tokens)} on demand</span></div>
+          <pre class="cx-body cx-loaded">${cap(meta)}</pre>
+          ${body ? html`<div class="cx-ondemand">
+            <span class="cx-od-tag">body · loaded when the agent invokes this skill</span>
+            <pre class="cx-body">${cap(body)}</pre>
+          </div>` : nothing}
+        </div>`;
+    }
+    return html`
+      <div class="cx-block">
+        <div class="cx-tag">&lt;${c.label}&gt; <span class="dim">${fmtNum(c.loaded_tokens ?? c.est_tokens)} tok</span></div>
+        <pre class="cx-body cx-loaded">${cap(text)}</pre>
+      </div>`;
+  }
+
+  // ── left: effective-context preview ───────────────────────────────
+  _previewCard(d) {
+    const comps = d.components || [];
+    const full = this._effectiveText(comps);
+    return html`
+      <div class="cx-card cx-grow">
+        <div class="cx-head">
+          <div class="cx-eyebrow">effective context · what the model sees</div>
+          <div class="cx-btns">
+            <button class="cx-btn ${this._raw ? 'on' : ''}" @click=${() => { this._raw = !this._raw; }}>raw</button>
+            <button class="cx-btn" @click=${() => this._export(comps)}>export</button>
+          </div>
+        </div>
+        ${!comps.length
+          ? html`<div class="cx-empty">No composed system prompt for this agent.</div>`
+          : this._raw
+            ? html`<pre class="cx-raw">${full}</pre>`
+            : html`<div class="cx-preview ${this._showAll ? 'open' : ''}">
+                ${comps.map((c) => this._block(c))}
+              </div>`}
+        ${comps.length && !this._raw ? html`
+          <button class="cx-showall" @click=${() => { this._showAll = !this._showAll; }}>
+            ${this._showAll ? 'collapse' : `show all · ${comps.length} section${comps.length === 1 ? '' : 's'}`}
+          </button>` : nothing}
+      </div>`;
+  }
+
+  // ── right: composition layers ─────────────────────────────────────
+  _compositionCard(d) {
+    const layers = d.layers || [];
+    const total = d.window || (d.used || 0);
+    const rows = layers.map((l) => html`
+      <div class="cx-lrow">
+        <span class="cx-dot" style="background:${LAYER_COLOR[l.key]}"></span>
+        <span class="cx-lname"><span class="cx-lt">${l.label}</span><span class="cx-lsub">${l.sub}</span></span>
+        <span class="cx-ltok">${fmtNum(l.tokens)}</span>
+        <span class="cx-lpct">${this._pct(l.pct)}</span>
+      </div>`);
+    return html`
+      <div class="cx-card">
+        <div class="cx-head">
+          <div class="cx-eyebrow">composition · contributing layers</div>
+          <span class="cx-chip">${layers.length} layers</span>
+        </div>
+        <div class="cx-lhead">
+          <span></span><span></span>
+          <span class="cx-lhc">tokens</span>
+          <span class="cx-lhc">share</span>
+        </div>
+        <div class="cx-layers">${rows}</div>
+        <div class="cx-total">
+          <span></span>
+          <span class="cx-lname"><span class="cx-lt">Total · context window</span></span>
+          <span class="cx-ltok">${fmtNum(total)}</span>
+          <span class="cx-lpct">100%</span>
         </div>
       </div>`;
   }
 
   render() {
-    // No key yet (agent id still arriving) → loading; key set but value not yet
-    // resolved → loading; explicit null payload → unavailable.
-    const data = this._sessions.value;
-    if (!this._sessions.key || data === undefined) {
-      return html`<div class="ctx"><div class="ctx-loading">loading…</div></div>`;
+    const d = this._ctx.value;
+    if (!this._ctx.key || d === undefined) {
+      return html`<div class="cx"><div class="cx-loading">loading…</div></div>`;
     }
-    if (!data) {
-      return html`<div class="ctx"><div class="ctx-loading">sessions unavailable</div></div>`;
+    if (!d) {
+      return html`<div class="cx"><div class="cx-loading">context unavailable</div></div>`;
     }
-
-    const sessions = data.sessions || [];
-    const peak = sessions.reduce((m, s) => Math.max(m, s.peak_context || 0), 0) || 1;
-    const totalTokens = sessions.reduce((a, s) => a + (s.total_tokens || 0), 0);
-
     return html`
-      <div class="ctx">
-        <div class="block ctx-block">
-          <div class="block-head">
-            <span class="eyebrow">context · per thread · current fill = last prompt sent</span>
-            <span class="ctx-total">${sessions.length} thread${sessions.length === 1 ? '' : 's'}</span>
+      <div class="cx">
+        <div class="cx-grid">
+          <div class="cx-col">
+            ${this._windowCard(d)}
+            ${this._previewCard(d)}
           </div>
-          ${sessions.length
-            ? html`
-                <div class="cs-list">${sessions.map((s) => this._row(s, peak))}</div>
-                <div class="ctx-foot"><span class="dim">bars scale to the busiest thread (${fmtNum(peak)} tok) — no model limit assumed</span><span class="dim">${fmtNum(totalTokens)} tokens all threads</span></div>`
-            : html`<div class="ctx-empty">No sessions with recorded usage yet. Threads appear here once the agent makes its first model call.</div>`}
+          <div class="cx-col">
+            ${this._compositionCard(d)}
+          </div>
         </div>
       </div>`;
   }
 
   _injectCSS() {
-    if (document.getElementById('ctx-css')) return;
+    if (document.getElementById('cx-css')) return;
     const s = document.createElement('style');
-    s.id = 'ctx-css';
+    s.id = 'cx-css';
     s.textContent = `
-.ctx { padding:14px; height:100%; overflow:auto; }
-.ctx-loading { padding:24px; color:var(--t-3); font-family:var(--f-mono); font-size:var(--t-xs); }
-.ctx .block { background:var(--bg-1); border:1px solid var(--line-2); border-radius:var(--r-1); padding:14px 16px; max-width:760px; }
-.ctx .block-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
-.ctx .eyebrow { font-family:var(--f-mono); font-size:var(--t-xxs); letter-spacing:.13em; text-transform:uppercase; color:var(--t-3); }
-.ctx-total { font-family:var(--f-mono); font-size:var(--t-xs); color:var(--t-1); background:var(--bg-2); border:1px solid var(--line-2); border-radius:var(--r-0); padding:3px 9px; }
-.ctx-empty { font-family:var(--f-mono); font-size:var(--t-xs); color:var(--t-4); padding:18px 0; }
-.cs-list { display:flex; flex-direction:column; }
-.cs-row { padding:12px 0; border-top:1px solid var(--line-1); }
-.cs-row:first-child { border-top:0; padding-top:2px; }
-.cs-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:7px; }
-.cs-label { font-family:var(--f-mono); font-size:var(--t-sm); color:var(--t-1); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.cs-cur { font-family:var(--f-mono); font-size:var(--t-sm); color:var(--t-1); flex-shrink:0; font-feature-settings:"tnum" 1; }
-.cs-bar { position:relative; height:8px; background:var(--bg-2); border:1px solid var(--line-2); border-radius:999px; overflow:hidden; }
-.cs-peak { position:absolute; left:0; top:0; bottom:0; background:var(--acc-soft); }
-.cs-fill { position:absolute; left:0; top:0; bottom:0; background:var(--acc); border-radius:999px; }
-.cs-meta { display:flex; flex-wrap:wrap; gap:12px; margin-top:7px; font-family:var(--f-mono); font-size:var(--t-xxs); color:var(--t-3); }
-.cs-meta .cs-model { color:var(--acc); }
-.cs-meta .cs-when { margin-left:auto; }
-.ctx-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:12px; padding-top:10px; border-top:1px dashed var(--line-1); font-family:var(--f-mono); font-size:var(--t-xxs); color:var(--t-4); }
+.cx { padding:14px; height:100%; overflow:auto; }
+.cx-loading,.cx-empty { padding:20px; color:var(--t-3); font-family:var(--f-mono); font-size:var(--t-xs); }
+.cx-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; align-items:start; }
+@media (max-width:880px){ .cx-grid { grid-template-columns:1fr; } }
+.cx-col { display:flex; flex-direction:column; gap:14px; min-width:0; }
+.cx-card { background:var(--bg-1); border:1px solid var(--line-2); border-radius:var(--r-1); padding:13px 15px; min-width:0; }
+.cx-grow { display:flex; flex-direction:column; }
+.cx-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:11px; }
+.cx-eyebrow { font-family:var(--f-mono); font-size:var(--t-xxs); letter-spacing:.12em; text-transform:uppercase; color:var(--t-3); min-width:0; }
+.cx-eyebrow .acc { color:var(--acc); }
+.cx-sub { font-family:var(--f-mono); font-size:var(--t-xxs); color:var(--t-4); margin:-4px 0 10px; }
+.cx-chips,.cx-btns { display:flex; gap:6px; flex-shrink:0; }
+.cx-chip { font-family:var(--f-mono); font-size:var(--t-xxs); color:var(--t-2); background:var(--bg-2); border:1px solid var(--line-2); border-radius:999px; padding:2px 9px; font-feature-settings:"tnum" 1; }
+.cx-chip.acc { color:var(--acc); border-color:var(--acc-line); }
+.cx-chip.warn { color:var(--warn); border-color:var(--warn); }
+.cx-btn { font-family:var(--f-mono); font-size:var(--t-xxs); color:var(--t-3); background:var(--bg-2); border:1px solid var(--line-2); border-radius:var(--r-0); padding:2px 8px; cursor:pointer; }
+.cx-btn:hover { color:var(--t-1); }
+.cx-btn.on { color:var(--acc); border-color:var(--acc-line); background:var(--acc-soft); }
+/* meter */
+.cx-meter { display:flex; height:34px; background:var(--bg-2); border:1px solid var(--line-2); border-radius:var(--r-0); overflow:hidden; }
+.cx-seg-fill { display:block; height:100%; min-width:1px; }
+.cx-axis { display:flex; justify-content:space-between; margin-top:5px; font-family:var(--f-mono); font-size:9px; color:var(--t-4); }
+/* layers */
+.cx-lhead { display:grid; grid-template-columns:10px 1fr auto auto; gap:10px; padding-bottom:4px; }
+.cx-lhc { font-family:var(--f-mono); font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--t-4); text-align:right; }
+.cx-lhc:nth-child(4) { min-width:38px; }
+.cx-layers { display:flex; flex-direction:column; }
+.cx-lrow,.cx-total { display:grid; grid-template-columns:10px 1fr auto auto; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--line-1); }
+.cx-lrow:first-child { border-top:0; }
+.cx-total { border-top:1px solid var(--line-2); margin-top:4px; }
+.cx-dot { width:8px; height:8px; border-radius:2px; }
+.cx-lname { display:flex; flex-direction:column; min-width:0; }
+.cx-lt { font-family:var(--f-sans,inherit); font-size:var(--t-sm); color:var(--t-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cx-lsub { font-family:var(--f-mono); font-size:9px; color:var(--t-4); }
+.cx-ltok { font-family:var(--f-mono); font-size:var(--t-sm); color:var(--t-1); text-align:right; font-feature-settings:"tnum" 1; }
+.cx-total .cx-ltok { font-weight:600; }
+.cx-lpct { font-family:var(--f-mono); font-size:var(--t-xs); color:var(--t-3); text-align:right; min-width:38px; font-feature-settings:"tnum" 1; }
+/* preview */
+.cx-preview { display:flex; flex-direction:column; gap:9px; max-height:340px; overflow:auto; }
+.cx-preview.open { max-height:none; }
+.cx-block { border-left:2px solid var(--line-2); padding-left:10px; }
+.cx-tag { font-family:var(--f-mono); font-size:var(--t-xs); color:var(--acc); margin-bottom:3px; }
+.cx-tag .dim { color:var(--t-4); }
+.cx-body { margin:0; white-space:pre-wrap; word-break:break-word; font-family:var(--f-mono); font-size:var(--t-xxs); color:var(--t-2); line-height:1.5; }
+.cx-loaded { color:var(--t-1); }
+.cx-ondemand { margin-top:5px; opacity:.55; border-left:2px dashed var(--line-2); padding-left:8px; }
+.cx-od-tag { display:block; font-family:var(--f-mono); font-size:9px; letter-spacing:.04em; text-transform:uppercase; color:var(--t-4); margin-bottom:2px; }
+.cx-raw { margin:0; white-space:pre-wrap; word-break:break-word; font-family:var(--f-mono); font-size:var(--t-xxs); color:var(--t-2); max-height:360px; overflow:auto; background:var(--bg-2); border:1px solid var(--line-1); border-radius:var(--r-0); padding:10px; }
+.cx-showall { margin-top:10px; align-self:center; font-family:var(--f-mono); font-size:var(--t-xxs); color:var(--t-3); background:var(--bg-2); border:1px solid var(--line-2); border-radius:999px; padding:4px 14px; cursor:pointer; }
+.cx-showall:hover { color:var(--acc); border-color:var(--acc-line); }
+.cx .dim { color:var(--t-4); }
 `;
     document.head.appendChild(s);
   }

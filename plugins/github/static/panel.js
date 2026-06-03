@@ -249,6 +249,8 @@ poll_interval_s: 30
 #            type (comments, pushes…), then the activity feed.
 #   issues — always /issues (real-time; issue/PR opened/closed/labeled only).
 #   events — the /events activity feed (richer, but cached + laggy).
+# On the issues source, `actor` is the issue/PR author, NOT whoever performed
+# a later label/close — rules matching `actor` on those should use source: events.
 # source: auto
 
 rules:

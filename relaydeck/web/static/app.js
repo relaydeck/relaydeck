@@ -741,15 +741,32 @@ class App {
       return;
     }
     // Re-use lens instance if same id; recreate on lens change to drop subscriptions.
+    let lensChanged = false;
     if (this._currentLensId !== lensDef.id) {
       if (this._currentLens && this._currentLens.unmount) try { this._currentLens.unmount(); } catch (_) {}
       this._currentLens = new lensDef.ctor(this, lensDef);
       this._currentLensId = lensDef.id;
+      this._detailRenderKey = null;
+      lensChanged = true;
     }
     this._currentLens.renderSidebar(this.sideEl);
     const agent = (this._currentLensId === 'agents')
       ? (this.state.agents || []).find(a => a.id === this._currentLens.activeAgentId)
       : null;
+    if (this._currentLensId === 'agents' && this._currentLens.activeAgentId && !agent) {
+      this._currentLens.activeAgentId = null;
+    }
+    const detailKey = this._currentLensId === 'agents'
+      ? `agents:${this._currentLens.activeAgentId || ''}`
+      : `lens:${this._currentLensId}`;
+    if (!lensChanged && this._detailRenderKey === detailKey) return;
+    this._detailRenderKey = detailKey;
+
+    // Host-level detail generation. Every detail (re)render bumps it; an
+    // async renderDetail (from this OR a previously-switched lens — they all
+    // target the same shared detail pane) checks it and bails if a newer one
+    // started, so a stale mount can't wipe/clobber the current lens.
+    this._detailGen = (this._detailGen || 0) + 1;
     if (this._currentLensId === 'agents') {
       // Pass the scoped agent list to the fleet view; the selected
       // agent itself is allowed to come from outside the scope (we
@@ -1079,19 +1096,38 @@ class PluginLens {
 
   async renderDetail(container) {
     this._detailEl = container;
+    // Generation guard against the mount race. renderDetail is async (awaits
+    // the module import + the lens's own mount, which fetches). The shell
+    // re-renders on live events / nav, and EVERY lens — including a previous
+    // one mid-switch — writes to this same shared pane. The generation lives
+    // on the host (not per-PluginLens) so a stale renderDetail from any lens
+    // bails before its `innerHTML=''` wipes the current lens's lit markers
+    // (which would throw "Cannot read properties of null (insertBefore)").
+    const host = this.host;
+    const gen = host._detailGen;
+    const current = () => gen === host._detailGen;
     container.innerHTML = '<div class="pane-empty"><div class="sub">loading…</div></div>';
     try {
       const inst = await this._load();
-      container.innerHTML = '';
+      if (!current()) return;   // a newer detail render superseded us
+      // Mount into a DEDICATED child (display:contents so it adds no layout
+      // box), not the shared pane. If a stale lens render resumes later it
+      // renders into its own — now detached — node instead of this shared one,
+      // so lit never inserts against a wiped marker (the insertBefore crash).
+      const mountEl = document.createElement('div');
+      mountEl.style.display = 'contents';
+      container.replaceChildren(mountEl);
       this._sectionCbs = [];
-      await inst.mount(container, this.host.api, {
-        host: this.host,
+      await inst.mount(mountEl, host.api, {
+        host,
         section: this._section,
         onSectionChange: (cb) => { if (typeof cb === 'function') this._sectionCbs.push(cb); },
         setSection: (id) => this.setSection(id),
         refreshNav: () => { if (this._sideEl) this.renderSidebar(this._sideEl); },
+        isCurrent: current,
       });
     } catch (e) {
+      if (!current()) return;   // superseded — the error is from a wiped mount
       container.innerHTML = `<div class="pane-empty"><div class="ttl">Plugin lens failed</div><div class="sub">${esc(e.message || String(e))}</div></div>`;
     }
   }

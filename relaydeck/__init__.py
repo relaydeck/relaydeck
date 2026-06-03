@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from pathlib import Path
+import sys
 
 
 def _resolve_version() -> str:
@@ -31,6 +32,18 @@ def _resolve_version() -> str:
 __version__ = _resolve_version()
 
 
+def _skip_plugin_cli_bootstrap(argv: list[str] | None = None) -> bool:
+    """True for built-in commands that must not start plugin lifecycles.
+
+    Plugin CLI commands are registered before Click parses argv, but loading
+    plugins also runs on_load hooks. Keep pipe-oriented auth commands free of
+    worker/poller side effects so `relaydeck auth token` stays raw.
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
+    args = [a for a in args if not a.startswith("-")]
+    return bool(args) and args[0] == "auth"
+
+
 def main() -> None:
     """Entry point for the `relaydeck` CLI."""
     from relaydeck.plugin import PluginContext, get_registry
@@ -43,7 +56,7 @@ def main() -> None:
     # no-op when already loaded.
     home = Path.home() / ".relaydeck"
     registry = get_registry(home)
-    if not registry.all():
+    if not _skip_plugin_cli_bootstrap() and not registry.all():
         with suppress(Exception):
             registry.load_all(PluginContext(config_home=home, workspace_path=None))
     _register_plugin_cli(registry, cli_main)

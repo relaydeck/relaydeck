@@ -604,6 +604,25 @@ class Orchestrator:
         if agent_cls is None:
             raise ValueError(f"Unknown agent type: {spec.type}")
 
+        # Snapshot the spawn-time config ("restart to apply" detection). Done
+        # before the lock — it reads skill files — and persisted after the
+        # thread launches. Best-effort: a snapshot failure never blocks spawn.
+        running_snapshot: dict | None = None
+        try:
+            from relaydeck import restart_state as _rs
+            running_snapshot = _rs.compute_snapshot(
+                self.config_home, self.db_path,
+                agent_id=agent_id, agent_type=spec.type,
+                workspace=spec.workspace,
+                purpose=getattr(spec, "purpose", "") or "",
+                system_prompt=getattr(spec, "system_prompt", "") or "",
+                inject_preamble=bool(getattr(spec, "inject_identity_preamble", True)),
+                config=spec.config or {},
+                model_override=spec.model_override,
+            )
+        except Exception:
+            logger.debug("running_config snapshot failed for %s", agent_id, exc_info=True)
+
         with self._lock:
             if agent_id in self._running:
                 return  # Already running (raced with another start; safe).
@@ -670,6 +689,22 @@ class Orchestrator:
             self._instances[agent_id] = agent
             thread.start()
             logger.info("Started agent: %s (%s)", agent_id, spec.type)
+
+            # Persist the spawn-time config snapshot so a later config edit
+            # surfaces as "restart to apply" against THIS running process.
+            if running_snapshot is not None:
+                try:
+                    _c = open_db(self.db_path)
+                    try:
+                        _c.execute(
+                            "UPDATE agents SET running_config = ? WHERE id = ?",
+                            (json.dumps(running_snapshot), agent_id),
+                        )
+                        _c.commit()
+                    finally:
+                        _c.close()
+                except Exception:
+                    logger.debug("persist running_config failed for %s", agent_id, exc_info=True)
 
         # Verify the agent actually came up. Without this, `relaydeck agent
         # start` returned "✓ Agent started" the moment the thread was
@@ -933,7 +968,8 @@ class Orchestrator:
             rows = conn.execute(
                 "SELECT id, type, name, status, workspace, auto_start, "
                 "created_at, last_active_at, purpose, tags, "
-                "semantic_status, semantic_status_at, semantic_status_source "
+                "semantic_status, semantic_status_at, semantic_status_source, "
+                "running_config "
                 "FROM agents ORDER BY created_at DESC"
             ).fetchall()
             return [_agent_row_to_dict(r) for r in rows]
@@ -1331,6 +1367,12 @@ def _agent_row_to_dict(row) -> dict[str, Any]:
         d["tags"] = []
     if d.get("purpose") is None:
         d["purpose"] = ""
+    raw_rc = d.get("running_config")
+    if isinstance(raw_rc, str) and raw_rc:
+        try:
+            d["running_config"] = json.loads(raw_rc)
+        except Exception:
+            d["running_config"] = None
     # A dead process can't be actively "working" or "awaiting-input" —
     # those are live-only semantic states. If the process exited while
     # one was set (and the row wasn't reconciled), it's stale: drop it

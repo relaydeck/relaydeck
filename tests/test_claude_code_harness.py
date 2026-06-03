@@ -4,7 +4,7 @@ Claude Code harness — native skills via `--plugin-dir`.
 Claude Code 2.x has a native Agent Skills system, so the harness materializes
 every workspace `runtime/skills/<dir>/SKILL.md` (+ gated user skills) into a
 session-scoped Claude Code plugin dir and passes `--plugin-dir`. The model
-then loads them natively (shows in `/skills`, namespaced `/relaydeck:<name>`,
+then loads them natively (shows in `/skills`, namespaced `/skills:<name>`,
 progressive disclosure) instead of every body being inlined into
 `--append-system-prompt`.
 
@@ -112,10 +112,11 @@ def test_claude_code_materializes_plugin_skills(tmp_path):
     cmd = agent._build_command()
     pdir = _plugin_dir(cmd)
     assert pdir is not None, "claude-code must pass --plugin-dir when skills exist"
-    # Native plugin manifest.
+    # Native plugin manifest. Neutral "skills" namespace so injected
+    # third-party / user skills aren't branded as relaydeck's in /skills.
     manifest = pdir / ".claude-plugin" / "plugin.json"
     assert manifest.exists()
-    assert json.loads(manifest.read_text())["name"] == "relaydeck"
+    assert json.loads(manifest.read_text())["name"] == "skills"
     # Each skill materialized as skills/<name>/SKILL.md with its body.
     for name, marker in [("relaydeck-cli", "relaydeck workspace message"),
                          ("relaydeck-telegram", "relaydeck telegram reply")]:

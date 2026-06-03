@@ -1,10 +1,10 @@
 """
 `relaydeck skills ...` — CLI surface for the skills plugin.
 
-Read commands (`list`/`show`/`validate`/`doctor`) work off LIVE discovery
+Read commands (`list`/`show`/`doctor`) work off LIVE discovery
 (`relaydeck.skills`), so they're always truthful regardless of how fresh the
 daemon's cache is. `rescan` refreshes the cache mirror the lens reads.
-`link`/`unlink` are the operator import actions (symlink/copy a skill
+`link`/`unlink`/`add` are the operator import actions (symlink/copy a skill
 into a workspace). All are local filesystem/DB operations — they don't
 touch live agent state, so no daemon round-trip is required (agents pick
 up a newly-linked skill on next start).
@@ -110,27 +110,9 @@ def register(plugin) -> None:
             console.print(f"  [red]error[/]  : {e}")
         for w in match.warnings:
             console.print(f"  [yellow]warn[/]   : {w}")
-        # Consumers: which workspaces inject this skill (by name match).
         if match.injectable and match.workspace:
             console.print(f"  injected in: {match.workspace} "
                           f"(agents in this workspace see it on next start)")
-
-    @host.cli.command("validate", help="Validate skills; exit non-zero if any are invalid.")
-    @click.option("--workspace", "-w", default=None, help="Limit to one workspace.")
-    def _validate(workspace):
-        refs = _all_refs()
-        if workspace:
-            refs = [r for r in refs if r.workspace == workspace]
-        bad = [r for r in refs if not r.valid]
-        if not bad:
-            console.print(f"[green]✓[/] {len(refs)} skill(s) valid.")
-            return
-        console.print(f"[red]✗ {len(bad)} invalid skill(s):[/]")
-        for r in bad:
-            console.print(f"  [bold]{r.name}[/] ({r.path})")
-            for e in r.errors:
-                console.print(f"    - {e}")
-        raise SystemExit(1)
 
     @host.cli.command("rescan", help="Refresh the skills inventory cache + emit change events.")
     def _rescan():
@@ -139,10 +121,27 @@ def register(plugin) -> None:
                                  include_codex=plugin._include_codex(),
                                  include_claude=plugin._include_claude())
         console.print(
-            f"[green]✓[/] rescanned: {summary['total']} skills "
+            f"[green]✓[/] refreshed inventory: {summary['total']} skills "
             f"({summary['changed']} changed, {summary['invalid']} invalid, "
             f"{summary['removed']} removed)"
         )
+
+    @host.cli.command("hubs", help="List curated public skill discovery sources.")
+    def _hubs():
+        from . import hubs
+        table = Table(title="Skill Sources", show_lines=False)
+        table.add_column("name", style="cyan")
+        table.add_column("kind")
+        table.add_column("url")
+        table.add_column("import hint")
+        for h in hubs.curated_hubs():
+            table.add_row(
+                h["name"],
+                h["kind"],
+                h["url"],
+                h.get("import_hint") or "-",
+            )
+        console.print(table)
 
     @host.cli.command("link", help="Import an external skill into a workspace (symlink/copy/reference).")
     @click.argument("target_path")
@@ -163,6 +162,124 @@ def register(plugin) -> None:
         if mode == "reference":
             console.print("[dim]reference mode records the link only; it is not injected.[/]")
 
+    @host.cli.command("add", help="Discover and import skill(s) from any supported source.")
+    @click.argument("source")
+    @click.option("--workspace", "-w", default=None, help="Deploy to one workspace only (default: all).")
+    @click.option("--catalog-only", is_flag=True, help="Register in managed catalog without deploying.")
+    @click.option("--skill", "skill_filter", default=None, help="Pick one skill by name when a source contains many.")
+    @click.option("--mode", type=click.Choice(["symlink", "copy", "reference"]),
+                  default="symlink", show_default=True)
+    @click.option("--refresh", is_flag=True, help="Re-fetch the cached source first.")
+    @click.option("--dry-run", is_flag=True, help="Discover only; do not import.")
+    def _add(source, workspace, catalog_only, skill_filter, mode, refresh, dry_run):
+        from . import manager
+        try:
+            resolved = manager.resolve_import_source(
+                config_home, source, refresh=refresh, skill_filter=skill_filter,
+            )
+        except ValueError as exc:
+            console.print(f"[red]✗[/] {exc}")
+            raise SystemExit(1)
+        skills = resolved.get("skills") or []
+        console.print(f"[dim]{resolved.get('source', {}).get('display', source)}[/]")
+        console.print(f"[bold]Found {len(skills)} skill(s)[/]")
+        for s in skills:
+            ok = "[green]●[/]" if s.get("valid") else "[red]✗[/]"
+            console.print(
+                f"  {ok} [cyan]{s.get('name')}[/]  "
+                f"subpath={s.get('relative_subpath') or '.'}"
+            )
+        if dry_run:
+            return
+        selections = [
+            {"subpath": s.get("relative_subpath") or s.get("subpath") or "."}
+            for s in skills if s.get("valid")
+        ]
+        if not selections:
+            console.print("[red]✗[/] no valid skills to import")
+            raise SystemExit(1)
+        deploy_to = "none" if catalog_only else ( [workspace] if workspace else "all" )
+        try:
+            result = manager.import_resolved_skills(
+                config_home, db_path, resolved=resolved,
+                selections=selections, workspace=workspace, deploy_to=deploy_to, mode=mode,
+            )
+        except ValueError as exc:
+            console.print(f"[red]✗[/] {exc}")
+            raise SystemExit(1)
+        for item in result.get("imports") or []:
+            alias = item.get("alias") or item.get("catalog", {}).get("alias")
+            n_ws = len(item.get("deployments") or [])
+            if n_ws:
+                console.print(f"[green]✓[/] imported [bold]{alias}[/] into {n_ws} workspace(s) ({mode})")
+            else:
+                console.print(f"[green]✓[/] catalogued [bold]{alias}[/] (not deployed)")
+        for err in result.get("errors") or []:
+            console.print(f"  [red]✗[/] {err.get('subpath')}: {err.get('error')}")
+
+    @host.cli.command("import-git", help="Clone a Git/GitHub skill and link it into a workspace.")
+    @click.argument("source_url")
+    @click.option("--workspace", "-w", required=True, help="Destination workspace.")
+    @click.option("--alias", default=None, help="Folder name in the workspace.")
+    @click.option("--subpath", default=None, help="Skill subdirectory inside the repo.")
+    @click.option("--ref", "source_ref", default=None, help="Git branch/tag/ref.")
+    @click.option("--mode", type=click.Choice(["symlink", "copy", "reference"]),
+                  default="symlink", show_default=True)
+    @click.option("--refresh", is_flag=True, help="Re-clone the cached source first.")
+    def _import_git(source_url, workspace, alias, subpath, source_ref, mode, refresh):
+        from . import manager
+        try:
+            res = manager.import_git_skill(
+                config_home,
+                db_path,
+                workspace=workspace,
+                source_url=source_url,
+                alias=alias,
+                source_ref=source_ref,
+                source_subpath=subpath,
+                mode=mode,
+                refresh=refresh,
+            )
+        except ValueError as exc:
+            console.print(f"[red]✗[/] {exc}")
+            raise SystemExit(1)
+        link = res["link"]
+        console.print(
+            f"[green]✓[/] imported [bold]{link['alias']}[/] into {workspace} ({mode})"
+        )
+
+    @host.cli.command("refresh-imports", help="Check managed skill imports for local drift/upstream updates.")
+    @click.option("--force", is_flag=True, help="Ignore the check interval.")
+    def _refresh_imports(force):
+        from . import manager
+        res = manager.refresh_managed_imports(
+            config_home, db_path, min_interval_s=0 if force else 3600, force=force
+        )
+        console.print(
+            f"[green]✓[/] checked {res['checked']} managed import(s); "
+            f"{res['changed']} changed, {res['update_available']} update available, "
+            f"{res['skipped']} skipped"
+        )
+        for err in res.get("errors") or []:
+            console.print(f"  [red]{err['workspace']}/{err['alias']}[/]: {err['error']}")
+
+    @host.cli.command("deploy", help="Inject a managed catalog skill into a workspace.")
+    @click.argument("alias")
+    @click.option("--workspace", "-w", required=True, help="Destination workspace.")
+    @click.option("--mode", type=click.Choice(["symlink", "copy", "reference"]),
+                  default="symlink", show_default=True)
+    def _deploy(alias, workspace, mode):
+        from . import manager
+        try:
+            link = manager.deploy_catalog_skill(config_home, db_path, alias, workspace, mode=mode)
+        except Exception as exc:
+            console.print(f"[red]✗[/] {exc}")
+            raise SystemExit(1)
+        console.print(
+            f"[green]✓[/] injected [bold]{link['alias']}[/] into {workspace} ({mode}); "
+            "active on next agent start"
+        )
+
     @host.cli.command("unlink", help="Remove a linked skill from a workspace.")
     @click.argument("alias")
     @click.option("--workspace", "-w", required=True, help="Workspace the link lives in.")
@@ -180,6 +297,7 @@ def register(plugin) -> None:
 
     @host.cli.command("doctor", help="Skills health summary across all sources.")
     def _doctor():
+        from . import manager
         refs = _all_refs()
         by_source: dict[str, int] = {}
         invalid = 0
@@ -192,9 +310,19 @@ def register(plugin) -> None:
         console.print(f"[bold]Skills doctor[/] — {len(refs)} total")
         for src, n in sorted(by_source.items()):
             console.print(f"  {src:16} {n}")
-        console.print(f"  {'invalid':16} {invalid}"
-                      + (" [red](review with `relaydeck skills validate`)[/]" if invalid else ""))
+        console.print(f"  {'invalid':16} {invalid}")
         console.print(f"  {'warnings':16} {warnings}")
+        try:
+            overview = manager.inventory_overview(db_path)
+            summary = overview.get("summary") or {}
+            console.print(f"  {'active':16} {summary.get('active', 0)}")
+            console.print(
+            f"  {'workspace LLM tokens':16} "
+            f"{int(summary.get('usage_tokens_by_skill_exposure') or 0):,}"
+            )
+            console.print(f"  {'exact uses':16} {int(summary.get('exact_skill_uses') or 0):,}")
+        except Exception:
+            pass
         codex_root = _skills.codex_skills_root()
         console.print(f"  codex root      : {codex_root} "
                       f"({'present' if codex_root.is_dir() else 'absent'})")

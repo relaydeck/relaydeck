@@ -731,7 +731,7 @@ def db_status(path: str | Path) -> dict[str, Any]:
 # migrations have a real version anchor to gate on. The migrations
 # themselves stay idempotent — `user_version` is an optimization + anchor,
 # not the correctness mechanism.
-_SCHEMA_VERSION = 15
+_SCHEMA_VERSION = 18
 
 
 def _user_version(conn: "sqlite3.Connection | _PooledConnection") -> int:
@@ -927,6 +927,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if not _is_duplicate_column(exc):
             raise
 
+    # Migration 18: agents.running_config — JSON snapshot of the spawn-time
+    # config (prompt hash, enabled plugins, injected skills + content hashes,
+    # model, launch flags) captured each time the agent (re)starts. Diffing it
+    # against the live desired config powers the "restart to apply" state — the
+    # agent process is stale until restarted. NULL = never captured (legacy /
+    # never started) → treated as not-pending.
+    try:
+        conn.execute("ALTER TABLE agents ADD COLUMN running_config TEXT")
+    except sqlite3.OperationalError as exc:
+        if not _is_duplicate_column(exc):
+            raise
+
     # Migration 9: plugin-event bus durability. `bus_events` is an
     # append-only log of every event passed through PluginEventBus
     # (write-before-dispatch, so crashes between persist and consume
@@ -1023,10 +1035,25 @@ def _migrate(conn: sqlite3.Connection) -> None:
             frontmatter_json TEXT,
             size            INTEGER NOT NULL DEFAULT 0,
             mtime           REAL NOT NULL DEFAULT 0,
+            body_chars      INTEGER NOT NULL DEFAULT 0,
+            token_estimate  INTEGER NOT NULL DEFAULT 0,
+            risk_level      TEXT NOT NULL DEFAULT 'low',
+            risk_flags_json TEXT,
             last_scanned_at REAL NOT NULL DEFAULT 0,
             updated_at      REAL NOT NULL DEFAULT 0
         )"""
     )
+    for col, decl in {
+        "body_chars": "INTEGER NOT NULL DEFAULT 0",
+        "token_estimate": "INTEGER NOT NULL DEFAULT 0",
+        "risk_level": "TEXT NOT NULL DEFAULT 'low'",
+        "risk_flags_json": "TEXT",
+    }.items():
+        try:
+            conn.execute(f"ALTER TABLE skills_cache ADD COLUMN {col} {decl}")
+        except sqlite3.OperationalError as exc:
+            if not _is_duplicate_column(exc):
+                raise
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_skills_cache_ws "
         "ON skills_cache(workspace, source_type)"
@@ -1048,12 +1075,70 @@ def _migrate(conn: sqlite3.Connection) -> None:
             target_id    TEXT,
             mode         TEXT NOT NULL DEFAULT 'symlink',
             enabled      INTEGER NOT NULL DEFAULT 1,
+            source_url   TEXT,
+            source_ref   TEXT,
+            source_subpath TEXT,
+            review_status TEXT NOT NULL DEFAULT 'not-reviewed',
+            review_summary TEXT,
+            reviewed_at  REAL,
+            last_checked_at REAL,
             created_at   REAL NOT NULL DEFAULT 0
         )"""
     )
+    for col, decl in {
+        "source_url": "TEXT",
+        "source_ref": "TEXT",
+        "source_subpath": "TEXT",
+        "review_status": "TEXT NOT NULL DEFAULT 'not-reviewed'",
+        "review_summary": "TEXT",
+        "reviewed_at": "REAL",
+        "last_checked_at": "REAL",
+    }.items():
+        try:
+            conn.execute(f"ALTER TABLE skill_links ADD COLUMN {col} {decl}")
+        except sqlite3.OperationalError as exc:
+            if not _is_duplicate_column(exc):
+                raise
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_links_ws_alias "
         "ON skill_links(workspace, alias)"
+    )
+
+    # Migration 17: skill_usage_events — exact skill-use telemetry when a
+    # harness or plugin can prove a specific skill was invoked. This is
+    # deliberately separate from the exposure rollup derived from
+    # usage_records: exposure says "agents in a workspace with this skill
+    # used tokens"; this table says "this skill was actually used", with
+    # optional token/cost attribution when the recorder can provide it.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS skill_usage_events (
+            id                TEXT PRIMARY KEY,
+            ts                REAL NOT NULL,
+            skill_id          TEXT,
+            skill_name        TEXT NOT NULL DEFAULT '',
+            workspace         TEXT,
+            agent_id          TEXT,
+            source            TEXT NOT NULL DEFAULT '',
+            event_type        TEXT NOT NULL DEFAULT 'used',
+            confidence        REAL NOT NULL DEFAULT 1.0,
+            prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+            completion_tokens INTEGER NOT NULL DEFAULT 0,
+            total_tokens      INTEGER NOT NULL DEFAULT 0,
+            cost_usd          REAL,
+            metadata_json     TEXT
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_skill_usage_skill "
+        "ON skill_usage_events(skill_name, workspace, ts)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_skill_usage_agent "
+        "ON skill_usage_events(agent_id, ts)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_skill_usage_ts "
+        "ON skill_usage_events(ts)"
     )
 
     # Migration 12: automation_runs — durable audit trail of automation

@@ -54,6 +54,22 @@ def _operator_login_home() -> str:
         return os.environ.get("HOME") or os.path.expanduser("~")
 
 
+def _skill_meta_split(text: str) -> tuple[str, str]:
+    """Split a SKILL.md into (metadata-always-in-context, body-loaded-on-demand).
+
+    The YAML frontmatter (name + description) is what the harness surfaces so
+    the agent can discover the skill; the body is read on demand when invoked.
+    Falls back to the first paragraph when there's no frontmatter."""
+    t = text or ""
+    if t.startswith("---"):
+        end = t.find("\n---", 3)
+        if end != -1:
+            cut = end + 4  # include the closing '---'
+            return t[:cut], t[cut:]
+    head, sep, rest = t.partition("\n\n")
+    return (head + sep, rest) if sep else (t, "")
+
+
 # ── Auth ─────────────────────────────────────────────────────────────
 #
 # Every HTTP route except the small public set below requires a Bearer
@@ -995,15 +1011,9 @@ def create_app(config_home: Path | None = None) -> FastAPI:
         finally:
             conn.close()
 
-    @app.get("/api/agents/{agent_id}/prompt-composition")
-    async def agent_prompt_composition(agent_id: str):
-        """How this agent's system prompt is built: the real components
-        (identity preamble, operator system_prompt, each injected skill,
-        fleet context) with exact char counts + ~chars/4 token estimates.
-        Read-only; no fabrication — see relaydeck/prompt_composition.py."""
-        agent = orch.get_agent(agent_id)
-        if not agent:
-            raise HTTPException(404, f"Agent {agent_id} not found")
+    def _compose_for_agent(agent: dict, agent_id: str) -> dict:
+        """System-prompt composition for an agent (shared by the
+        prompt-composition + context endpoints)."""
         from relaydeck.prompt_composition import compose_prompt_components
 
         workspace = agent.get("workspace") or None
@@ -1021,7 +1031,6 @@ def create_app(config_home: Path | None = None) -> FastAPI:
                 purpose = getattr(spec, "purpose", "") or purpose
         except Exception:
             pass
-        # Peers = other agents in the workspace (live DB), for the preamble.
         peers: list[dict[str, Any]] = []
         if workspace:
             from relaydeck.db import open_db
@@ -1048,11 +1057,150 @@ def create_app(config_home: Path | None = None) -> FastAPI:
             peers=peers,
             inject_preamble=inject,
         )
-        # Peers are part of the preamble; surface them so the Identity tab
-        # can render the "visible in preamble" panel from the same fetch.
         out["peers"] = peers
         out["inject_preamble"] = inject
         return out
+
+    @app.get("/api/agents/{agent_id}/prompt-composition")
+    async def agent_prompt_composition(agent_id: str):
+        """How this agent's system prompt is built: the real components
+        (identity preamble, operator system_prompt, each injected skill,
+        fleet context) with exact char counts + ~chars/4 token estimates.
+        Read-only; no fabrication — see relaydeck/prompt_composition.py."""
+        agent = orch.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(404, f"Agent {agent_id} not found")
+        return _compose_for_agent(agent, agent_id)
+
+    @app.get("/api/agents/{agent_id}/context")
+    async def agent_context(agent_id: str):
+        """Assembled Context tab: the model's context window (limit from
+        models.dev), how it's filled by layer (system prompt / memory /
+        skills from the composition, conversation+tools from the live
+        prompt_tokens), the effective-context preview components, and a
+        turn-budget series."""
+        agent = orch.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(404, f"Agent {agent_id} not found")
+
+        comp = _compose_for_agent(agent, agent_id)
+        components = comp.get("components", [])
+        from relaydeck.prompt_composition import est_tokens
+
+        # Group the system-prompt components into named layers. Skills use
+        # progressive disclosure: only the SKILL.md frontmatter (name +
+        # description) sits in the base context to make the skill discoverable;
+        # the body is read on demand when the agent invokes it. So the skills
+        # layer counts the metadata, not the full body — counting the body
+        # massively overstates the real context cost.
+        layers_tok = {"system": 0, "memory": 0, "skills": 0}
+        for c in components:
+            label = str(c.get("label", ""))
+            tok = int(c.get("est_tokens") or 0)
+            if label.startswith("skill · "):
+                meta, body = _skill_meta_split(c.get("text", ""))
+                meta_tok = est_tokens(len(meta))
+                c["meta_chars"] = len(meta)
+                c["loaded_tokens"] = meta_tok
+                c["ondemand_tokens"] = est_tokens(len(body))
+                layers_tok["skills"] += meta_tok
+            elif label == "fleet context":
+                c["loaded_tokens"] = tok
+                layers_tok["memory"] += tok
+            else:  # identity preamble + system_prompt(yaml) — fully in context
+                c["loaded_tokens"] = tok
+                layers_tok["system"] += tok
+        system_total = sum(layers_tok.values())
+
+        # Live context fill + model/provider, from the most-recent usage row.
+        used = 0
+        model = ""
+        provider = ""
+        series: list[int] = []
+        from relaydeck.db import open_db
+        try:
+            conn = open_db(orch.db_path)
+            try:
+                row = conn.execute(
+                    "SELECT model, provider, prompt_tokens, session_id FROM "
+                    "usage_records WHERE agent_id = ? ORDER BY ts DESC LIMIT 1",
+                    (agent_id,),
+                ).fetchone()
+                if row:
+                    model = row["model"] or ""
+                    provider = row["provider"] or ""
+                    used = int(row["prompt_tokens"] or 0)
+                    sid = row["session_id"]
+                    # Turn-budget: last 12 prompt_tokens for that session, oldest→newest.
+                    trows = conn.execute(
+                        "SELECT prompt_tokens FROM usage_records WHERE agent_id = ? "
+                        "AND session_id = ? ORDER BY ts DESC LIMIT 12",
+                        (agent_id, sid),
+                    ).fetchall()
+                    series = [int(r["prompt_tokens"] or 0) for r in reversed(trows)]
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+        # Real context window limit (models.dev), cache-only (no network here).
+        window = None
+        try:
+            from relaydeck import models_dev
+            meta = models_dev.get_model_meta(
+                provider, model, orch.config_home, cache_only=True,
+            )
+            if meta:
+                lim = meta.get("limit")
+                if isinstance(lim, dict) and lim.get("context"):
+                    window = int(lim["context"])
+        except Exception:
+            window = None
+
+        # The system prompt is always in context, so the fill is at least the
+        # composed system prompt even if the last logged turn reported fewer
+        # prompt_tokens. This keeps the layers summing exactly to the window.
+        live_used = used
+        used = max(used, system_total)
+        convo = max(0, live_used - system_total)
+        layers = [
+            {"key": "system", "label": "System prompt",
+             "sub": "preamble · system_prompt", "tokens": layers_tok["system"]},
+            {"key": "memory", "label": "Memory / fleet context",
+             "sub": "fleet-context", "tokens": layers_tok["memory"]},
+            {"key": "skills", "label": "Skills",
+             "sub": "metadata in context · body on demand",
+             "tokens": layers_tok["skills"]},
+            {"key": "convo", "label": "Conversation & tools",
+             "sub": "live history + harness tool defs", "tokens": convo},
+        ]
+        if window:
+            free = max(0, window - used)
+            layers.append({"key": "free", "label": "Free space",
+                           "sub": "unused window", "tokens": free})
+            denom = window
+        else:
+            denom = max(1, used or system_total)
+        for ly in layers:
+            # Keep 2 decimals so the UI can show "<0.1%" instead of a flat "0%"
+            # for real-but-tiny layers.
+            ly["pct"] = round(100 * ly["tokens"] / denom, 2) if denom else 0.0
+
+        avg = round(sum(series) / len(series)) if series else 0
+        return {
+            "agent_id": agent_id,
+            "model": model,
+            "provider": provider,
+            "window": window,            # None when the model isn't catalogued
+            "used": used,                # reconciled fill (>= system prompt)
+            "live_used": live_used,      # last turn's raw prompt_tokens
+            "free": (max(0, window - used) if window else None),
+            "system_total": system_total,
+            "layers": layers,
+            "components": components,     # for the effective-context preview
+            "chars_per_token": comp.get("chars_per_token"),
+            "turn_budget": {"avg": avg, "series": series},
+        }
 
     @app.get("/api/agents/{agent_id}/sessions")
     async def agent_sessions(agent_id: str, limit: int = 50):

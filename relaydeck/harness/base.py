@@ -785,7 +785,14 @@ class HarnessAgent(BaseAgent):
         except FileNotFoundError:
             os.close(slave_fd); os.close(master_fd)
             self._master_fd = None
-            err = f"command not found: {cmd[0]}"
+            # Popen raises FileNotFoundError for TWO distinct causes: the
+            # command isn't on PATH, OR the cwd doesn't exist. They're easy to
+            # confuse — a missing workspace dir would otherwise be misreported
+            # as "command not found: <cli>". Disambiguate with a cwd check.
+            if cwd and not os.path.isdir(str(cwd)):
+                err = f"workspace directory not found: {cwd}"
+            else:
+                err = f"command not found: {cmd[0]}"
             self.emit("harness.error", {"error": err})
             self.update_status("errored", err)
             return

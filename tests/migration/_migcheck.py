@@ -92,12 +92,16 @@ def verify(db: str, base_url: str, before: dict, expect_schema: int) -> int:
     fails: list[str] = []
     after = snapshot(db, base_url)
 
-    # 1. Schema actually migrated to the new version.
+    # 1. Schema ended at the new version and never went backwards. We do NOT
+    #    require a strict increase: when the previous published release is
+    #    already at the current schema (a release with no migration), the
+    #    schema correctly stays the same — that's a valid upgrade, not a
+    #    failure. `!= expect_schema` already catches "migration didn't run."
     if after["schema"] != expect_schema:
         fails.append(f"schema {after['schema']} != expected {expect_schema} "
                      f"(was {before['schema']} before upgrade)")
-    if after["schema"] <= before["schema"]:
-        fails.append(f"schema did not advance ({before['schema']} -> {after['schema']})")
+    if after["schema"] < before["schema"]:
+        fails.append(f"schema regressed ({before['schema']} -> {after['schema']})")
 
     # 2. No row loss in any pre-existing table (migrations are additive).
     for t, n_before in before["counts"].items():

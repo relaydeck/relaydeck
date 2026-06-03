@@ -588,6 +588,7 @@ def _poller_with_config(cfg_home, ws, *, repo="relaydeck/relaydeck", emit_event=
     (cfg_home / "workspaces" / ws / "github.yaml").write_text(
         f"""
 repo: {repo}
+source: events
 rules:
   - name: bug
     when: {{ event: IssuesEvent, label: bug }}
@@ -660,6 +661,107 @@ def test_poller_legacy_cursor_migrates_without_firing(monkeypatch, tmp_path, iss
     assert "9001" in load_cursor(cursor_path(cfg, ws)).seen_ids
 
 
+# ── Poller: issues-since source (reliable default) ────────────────
+
+
+def _issue(num, *, state="open", labels=(), updated="2026-06-03T00:00:00Z", pr=False):
+    d = {"number": num, "state": state, "updated_at": updated,
+         "labels": [{"name": l} for l in labels], "user": {"login": "alice"},
+         "html_url": f"https://x/{num}", "title": f"t{num}"}
+    if pr:
+        d["pull_request"] = {"url": f"https://x/pull/{num}"}
+    return d
+
+
+def _issues_poller(cfg_home, ws, *, source="issues", emit_event=None):
+    (cfg_home / "workspaces" / ws / "runtime" / "github").mkdir(parents=True, exist_ok=True)
+    (cfg_home / "workspaces" / ws / "github.yaml").write_text(
+        f"""
+repo: relaydeck/relaydeck
+source: {source}
+rules:
+  - name: approved
+    when: {{ event: IssuesEvent, action: labeled, label: approved }}
+    do:
+      - bus.emit: {{ type: approved-seen, data: {{ n: "{{{{ issue.number }}}}" }} }}
+  - name: pr-open
+    when: {{ event: PullRequestEvent, action: opened }}
+    do:
+      - bus.emit: {{ type: pr-open-seen, data: {{}} }}
+"""
+    )
+    return GithubPoller(
+        workspace=ws, config_home=cfg_home, workspace_path=cfg_home,
+        bus=None, send_message=None, emit_event=emit_event,
+        gh_binary="gh", default_interval_s=30.0,
+    )
+
+
+def test_issues_source_bootstrap_then_label_and_pr(monkeypatch, tmp_path):
+    """The issues source: bootstrap fires nothing; a later label add and a new
+    PR synthesize IssuesEvent labeled / PullRequestEvent opened; re-polling the
+    same state is idempotent."""
+    ws = "demo"
+    cfg = tmp_path / "cfg"
+    emitted = []
+    p = _issues_poller(cfg, ws, emit_event=lambda t, d: emitted.append((t, d)))
+
+    feed = [[_issue(1)]]  # bootstrap: one open, unlabeled issue → no fire
+    monkeypatch.setattr(poller, "fetch_issues_since",
+                        lambda *a, **kw: PollResult(events=feed[0], error=None))
+    p._tick(_SilentWorker())
+    assert emitted == []
+    assert load_cursor(cursor_path(cfg, ws)).since is not None
+
+    # Label it `approved` + a brand-new PR appears.
+    feed[0] = [_issue(1, labels=["approved"], updated="2026-06-03T00:01:00Z"),
+               _issue(2, pr=True, updated="2026-06-03T00:02:00Z")]
+    p._tick(_SilentWorker())
+    types = [t for t, _ in emitted]
+    assert "approved-seen" in types
+    assert "pr-open-seen" in types
+    assert next(d for t, d in emitted if t == "approved-seen")["n"] == "1"
+
+    # Re-poll identical state → idempotent (no re-fire).
+    emitted.clear()
+    p._tick(_SilentWorker())
+    assert emitted == []
+
+
+def test_issues_source_records_poll_error(monkeypatch, tmp_path):
+    ws = "demo"
+    cfg = tmp_path / "cfg"
+    p = _issues_poller(cfg, ws, emit_event=lambda t, d: None)
+    monkeypatch.setattr(poller, "fetch_issues_since",
+                        lambda *a, **kw: PollResult(events=[], error="gh boom"))
+    p._tick(_SilentWorker())
+    assert load_cursor(cursor_path(cfg, ws)).last_error == "gh boom"
+
+
+def test_effective_source_auto():
+    from plugins.github.rules import Rule, RulesConfig
+    issue_rule = Rule(name="r", when={"event": "IssuesEvent"}, do=[])
+    comment_rule = Rule(name="c", when={"event": "IssueCommentEvent"}, do=[])
+
+    def cfg(rules, source):
+        return RulesConfig(repo="o/r", poll_interval_s=30.0, rules=rules, source=source)
+
+    # auto + only issue/PR rules → reliable issues source
+    assert cfg((issue_rule,), "auto").effective_source() == "issues"
+    # auto + a comment rule (events-only) → falls back to the activity feed
+    assert cfg((comment_rule,), "auto").effective_source() == "events"
+    # explicit always wins
+    assert cfg((comment_rule,), "issues").effective_source() == "issues"
+    assert cfg((issue_rule,), "events").effective_source() == "events"
+
+
+def test_load_config_rejects_bad_source(tmp_path):
+    p = tmp_path / "github.yaml"
+    p.write_text("repo: o/r\nsource: nonsense\n")
+    with pytest.raises(ValueError, match="source"):
+        load_config(p)
+
+
 # ── Poller: dedup + restart ───────────────────────────────────────
 
 
@@ -676,6 +778,7 @@ def test_poller_first_tick_bookmarks_without_firing(monkeypatch, tmp_path, issue
     (cfg_home / "workspaces" / ws / "github.yaml").write_text(
         """
 repo: relaydeck/relaydeck
+source: events
 rules:
   - name: bug
     when: { event: IssuesEvent, label: bug }
@@ -726,6 +829,7 @@ def test_poller_subsequent_tick_fires_new_events(
     (cfg_home / "workspaces" / ws / "github.yaml").write_text(
         """
 repo: relaydeck/relaydeck
+source: events
 rules:
   - name: bug
     when: { event: IssuesEvent, label: bug }
@@ -780,7 +884,7 @@ def test_poller_records_poll_error_without_masking_as_empty(
     cfg_home = tmp_path / "cfg"
     (cfg_home / "workspaces" / ws / "runtime" / "github").mkdir(parents=True)
     (cfg_home / "workspaces" / ws / "github.yaml").write_text(
-        "repo: relaydeck/relaydeck\nrules: []\n"
+        "repo: relaydeck/relaydeck\nsource: events\nrules: []\n"
     )
     save_cursor(cursor_path(cfg_home, ws), Cursor(last_event_id="9000"))
 
@@ -822,7 +926,7 @@ def test_poller_clears_last_error_on_successful_empty_poll(
     cfg_home = tmp_path / "cfg"
     (cfg_home / "workspaces" / ws / "runtime" / "github").mkdir(parents=True)
     (cfg_home / "workspaces" / ws / "github.yaml").write_text(
-        "repo: relaydeck/relaydeck\nrules: []\n"
+        "repo: relaydeck/relaydeck\nsource: events\nrules: []\n"
     )
     save_cursor(
         cursor_path(cfg_home, ws),
@@ -888,7 +992,7 @@ def test_poller_skips_when_no_config(monkeypatch, tmp_path):
 def test_workspace_github_active_with_yaml(tmp_path):
     ws_dir = tmp_path / "workspaces" / "demo"
     ws_dir.mkdir(parents=True)
-    (ws_dir / "github.yaml").write_text("repo: relaydeck/relaydeck\nrules: []\n")
+    (ws_dir / "github.yaml").write_text("repo: relaydeck/relaydeck\nsource: events\nrules: []\n")
     assert _workspace_has_github(tmp_path, "demo") is True
 
 
@@ -904,7 +1008,7 @@ def test_plugin_lifecycle_starts_and_stops_poller_with_workspace(monkeypatch, tm
     config_home = tmp_path / "cfg"
     (config_home / "workspaces" / "demo").mkdir(parents=True)
     (config_home / "workspaces" / "demo" / "github.yaml").write_text(
-        "repo: relaydeck/relaydeck\nrules: []\n"
+        "repo: relaydeck/relaydeck\nsource: events\nrules: []\n"
     )
 
     host = MockHost(
@@ -955,7 +1059,7 @@ def test_file_changed_reconciles_github_poller(monkeypatch, tmp_path):
     ws_dir = config_home / "workspaces" / "demo"
     ws_dir.mkdir(parents=True)
     yaml_path = ws_dir / "github.yaml"
-    yaml_path.write_text("repo: relaydeck/relaydeck\nrules: []\n")
+    yaml_path.write_text("repo: relaydeck/relaydeck\nsource: events\nrules: []\n")
     (config_home / "config.toml").write_text(
         f'[[workspace]]\nname = "demo"\npath = "{repo}"\n'
     )
@@ -999,7 +1103,7 @@ def test_file_changed_reconciles_via_repo_root_fallback(monkeypatch, tmp_path):
     repo.mkdir()
     ws_dir = config_home / "workspaces" / "demo"
     ws_dir.mkdir(parents=True)
-    (ws_dir / "github.yaml").write_text("repo: relaydeck/relaydeck\nrules: []\n")
+    (ws_dir / "github.yaml").write_text("repo: relaydeck/relaydeck\nsource: events\nrules: []\n")
     (config_home / "config.toml").write_text(
         f'[[workspace]]\nname = "demo"\npath = "{repo}"\n'
     )
@@ -1050,7 +1154,7 @@ def test_file_changed_stops_poller_when_github_yaml_removed(monkeypatch, tmp_pat
     ws_dir = config_home / "workspaces" / "demo"
     ws_dir.mkdir(parents=True)
     yaml_path = ws_dir / "github.yaml"
-    yaml_path.write_text("repo: relaydeck/relaydeck\nrules: []\n")
+    yaml_path.write_text("repo: relaydeck/relaydeck\nsource: events\nrules: []\n")
     (config_home / "config.toml").write_text(
         f'[[workspace]]\nname = "demo"\npath = "{repo}"\n'
     )

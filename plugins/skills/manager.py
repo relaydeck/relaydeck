@@ -434,19 +434,24 @@ def register_catalog_skill(
         raise ValueError(f"catalog skill {alias!r} already exists")
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.symlink_to(target)
-    return skills_cache.create_skill_link(
-        db_path,
-        CATALOG_WORKSPACE,
-        alias,
-        str(target),
-        mode="symlink",
-        target_id=target_id,
-        source_url=source_url,
-        source_ref=source_ref,
-        source_subpath=source_subpath,
-        review_status="imported",
-        review_summary="",
-    )
+    try:
+        return skills_cache.create_skill_link(
+            db_path,
+            CATALOG_WORKSPACE,
+            alias,
+            str(target),
+            mode="symlink",
+            target_id=target_id,
+            source_url=source_url,
+            source_ref=source_ref,
+            source_subpath=source_subpath,
+            review_status="imported",
+            review_summary="",
+        )
+    except Exception:
+        if dest.is_symlink():
+            dest.unlink()
+        raise
 
 
 def deploy_catalog_skill(
@@ -520,13 +525,21 @@ def link_skill(
             dest.symlink_to(target)
         else:
             shutil.copytree(target, dest)
-    return skills_cache.create_skill_link(
-        db_path, workspace, alias, str(target), mode=mode,
-        target_id=target_id,
-        source_url=source_url, source_ref=source_ref,
-        source_subpath=source_subpath, review_status=link_status,
-        review_summary=link_summary,
-    )
+    try:
+        return skills_cache.create_skill_link(
+            db_path, workspace, alias, str(target), mode=mode,
+            target_id=target_id,
+            source_url=source_url, source_ref=source_ref,
+            source_subpath=source_subpath, review_status=link_status,
+            review_summary=link_summary,
+        )
+    except Exception:
+        if mode != "reference":
+            if dest.is_symlink():
+                dest.unlink()
+            elif dest.is_dir():
+                shutil.rmtree(dest)
+        raise
 
 
 def unlink_skill(

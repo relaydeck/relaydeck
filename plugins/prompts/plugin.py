@@ -168,6 +168,23 @@ class PromptsPlugin(Plugin):
         self._register_api(host)
         self._spawn_sweeper(host)
 
+    def on_unload(self) -> None:
+        worker = self._sweeper
+        if worker is not None:
+            try:
+                worker.stop()
+            except Exception:
+                pass
+            try:
+                from relaydeck.workers import get_worker_registry
+                live_worker = get_worker_registry().get(worker.id)
+                if live_worker is not None:
+                    live_worker.join(timeout=2.0)
+            except Exception:
+                pass
+        self._sweeper = None
+        self.host = None
+
     # -- expiry sweeper ------------------------------------------------
 
     def _sweep_interval(self) -> float:

@@ -217,6 +217,7 @@ def fetch_issues_since(
     repo: str,
     since: str | None,
     *,
+    state: str = "all",
     gh_binary: str = "gh",
     per_page: int = 100,
     timeout: float = 30.0,
@@ -226,12 +227,12 @@ def fetch_issues_since(
     Hits `GET /repos/<repo>/issues` — a core, uncached endpoint (the events
     feed, by contrast, is delayed and eventually-consistent). `/issues`
     includes PRs (they carry a `pull_request` key). On bootstrap (`since`
-    None) it returns the current open+recent issues to seed state without
-    firing. `PollResult.events` carries raw issue objects here, not events;
-    the caller diffs them into synthesized events."""
+    None) it returns all current issues/PRs to seed state without firing.
+    `PollResult.events` carries raw issue objects here, not events; the caller
+    diffs them into synthesized events."""
     args = [
-        gh_binary, "api", "-X", "GET", f"repos/{repo}/issues",
-        "-F", "state=all", "-F", "sort=updated", "-F", "direction=asc",
+        gh_binary, "api", "--paginate", "--slurp", "-X", "GET", f"repos/{repo}/issues",
+        "-F", f"state={state}", "-F", "sort=updated", "-F", "direction=asc",
         "-F", f"per_page={per_page}",
     ]
     if since:
@@ -259,17 +260,45 @@ def fetch_issues_since(
         return PollResult(events=[], error=msg)
     if not isinstance(out, list):
         return PollResult(events=[], error="gh api returned non-list response")
-    return PollResult(events=out, error=None)
+    if out and all(isinstance(page, list) for page in out):
+        issues = [issue for page in out for issue in page]
+    else:
+        # Defensive fallback for older/nonstandard gh output where a single
+        # JSON array is returned even though --slurp was requested.
+        issues = out
+    return PollResult(events=[i for i in issues if isinstance(i, dict)], error=None)
+
+
+# Cap on the per-issue state map persisted in the cursor. Bounds cursor.json
+# growth on busy repos — we keep the most-recently-updated entries (the ones
+# that might change again) and drop dormant ones (a dormant issue that later
+# reopens just re-seeds, at worst one imperfect classification).
+_MAX_TRACKED_ISSUES = 2000
 
 
 def _issue_snapshot(issue: dict[str, Any]) -> dict[str, Any]:
-    """The diff-relevant state of an issue/PR: open/closed + its label set."""
+    """The diff-relevant state of an issue/PR: open/closed, its label set, and
+    updated_at (used only to prune the state map by recency)."""
     labels = sorted(
         str(lbl.get("name"))
         for lbl in (issue.get("labels") or [])
         if isinstance(lbl, dict) and lbl.get("name")
     )
-    return {"state": str(issue.get("state") or ""), "labels": labels}
+    return {
+        "state": str(issue.get("state") or ""),
+        "labels": labels,
+        "updated_at": str(issue.get("updated_at") or ""),
+    }
+
+
+def _prune_issue_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Bound the tracked-issue state to the most-recently-updated entries."""
+    if len(state) <= _MAX_TRACKED_ISSUES:
+        return state
+    ranked = sorted(
+        state.items(), key=lambda kv: str(kv[1].get("updated_at") or ""), reverse=True,
+    )
+    return dict(ranked[:_MAX_TRACKED_ISSUES])
 
 
 def _synth_event(repo: str, issue: dict[str, Any], action: str,
@@ -484,7 +513,17 @@ class GithubPoller:
         # request is caught next poll. State-diffing makes the overlap a no-op.
         poll_started = _now_iso()
         cursor = load_cursor(self._cursor_path)
-        result = fetch_issues_since(config.repo, cursor.since, gh_binary=self.gh_binary)
+        bootstrap = cursor.since is None and not cursor.issues
+        # Bootstrap seeds state from OPEN issues only — closed-and-dormant
+        # issues never generate future events, so tracking them all would just
+        # bloat the cursor. (A closed issue that later reopens/relabels then
+        # classifies imperfectly on the lightweight issues source; use
+        # `source: events` if you need that fidelity.) Subsequent polls fetch
+        # `state=all` so a tracked issue closing is still detected.
+        result = fetch_issues_since(
+            config.repo, cursor.since,
+            state="open" if bootstrap else "all", gh_binary=self.gh_binary,
+        )
         if result.error is not None:
             self._record_failure(result, worker)
             self._save_cursor(error=result.error)
@@ -493,19 +532,20 @@ class GithubPoller:
 
         issues = result.events  # raw issue/PR objects on this path
 
-        # Bootstrap: no watermark yet → record current state, fire nothing
-        # (don't replay history on first run).
-        if cursor.since is None and not cursor.issues:
+        # Bootstrap: record current state, fire nothing (don't replay history).
+        if bootstrap:
             _, state = diff_issue_events(config.repo, issues, {})
+            state = _prune_issue_state(state)
             with contextlib.suppress(Exception):
                 worker.log(
-                    f"bootstrap: bookmarking {len(state)} issues/PRs "
+                    f"bootstrap: bookmarking {len(state)} open issues/PRs "
                     "(history skipped)"
                 )
             self._save_cursor(error=None, since=poll_started, issues=state)
             return
 
         events, state = diff_issue_events(config.repo, issues, cursor.issues)
+        state = _prune_issue_state(state)
         if not events:
             with contextlib.suppress(Exception):
                 worker.log(f"polled {config.repo} — no new events", level="debug")

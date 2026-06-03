@@ -586,6 +586,60 @@ def daemon_start(host: str | None, port: int, wait_seconds: float):
     console.print(f"  [dim]log:[/] {result['log_path']}")
 
 
+@daemon.command("restart")
+@click.option("--host", default=None,
+              help="Bind address. Default: persisted preference, else "
+                   "127.0.0.1 (same precedence as `daemon start`).")
+@click.option("--port", default=8765, help="Bind port")
+@click.option("--wait", "wait_seconds", default=5.0, type=float,
+              help="Seconds to wait for /healthz before reporting")
+@click.option("--timeout", "timeout", default=5.0, type=float,
+              help="Seconds to wait for graceful stop before SIGKILL")
+def daemon_restart(host: str | None, port: int, wait_seconds: float, timeout: float):
+    """Stop the running daemon (if any) and start a fresh one.
+
+    Needed after editing daemon-side Python (poller, plugin, API handlers):
+    that code is loaded once at process start, so it only reloads on a real
+    restart. (Static web assets are re-read from disk per request and DON'T
+    need this.) Safe to run when the daemon is down — it just starts one."""
+    from relaydeck.daemon import start_daemon, stop_daemon
+    from relaydeck.state import get_daemon_bind_host, set_daemon_bind_host
+
+    home = _get_config_home()
+
+    stop = stop_daemon(home, timeout=timeout)
+    if stop["was_running"]:
+        if stop.get("signal") == "kill":
+            console.print(
+                f"[yellow]●[/] daemon (pid {stop['pid']}) didn't exit on "
+                f"SIGTERM; sent SIGKILL"
+            )
+        else:
+            console.print(f"[dim]·[/] stopped daemon (pid {stop['pid']})")
+
+    # Same host precedence as `daemon start`.
+    if host is None:
+        host = get_daemon_bind_host() or "127.0.0.1"
+    else:
+        set_daemon_bind_host(host)
+
+    result = start_daemon(home, host=host, port=port, wait_seconds=wait_seconds)
+    if result.get("exited_during_startup"):
+        console.print(
+            f"[red]✗[/] daemon exited during startup "
+            f"(rc={result.get('returncode')}). Last lines of log:"
+        )
+        log_path = result.get("log_path")
+        if log_path and Path(log_path).exists():
+            for line in Path(log_path).read_text().splitlines()[-10:]:
+                console.print(f"  [dim]│[/] {line}")
+        sys.exit(1)
+
+    verb = "ready" if result["healthy"] else "started (not healthy yet)"
+    console.print(f"[green]✓[/] daemon {verb} (pid {result['pid']})")
+    console.print(f"  [dim]log:[/] {result['log_path']}")
+
+
 @daemon.command("stop")
 @click.option("--timeout", "timeout", default=5.0, type=float,
               help="Seconds to wait for graceful exit before SIGKILL")

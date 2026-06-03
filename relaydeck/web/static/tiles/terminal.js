@@ -366,16 +366,19 @@ export default class TerminalTile {
       // re-click the tab.
       if (this.disposed) return;
       this.reconnectAttempts += 1;
+      let delay = Math.min(5000, Math.round(800 * Math.pow(1.35, this.reconnectAttempts - 1)));
       if (this._lastCtrlEvent === 'agent_not_running' && this.reconnectAttempts > 3) {
-        this._write('\r\n\x1b[2m[terminal reconnect paused until the agent starts]\x1b[0m\r\n');
-        return;
-      }
-      if (this._lastCtrlEvent === 'pty_closed' && this.reconnectAttempts > 20) {
-        this._write('\r\n\x1b[2m[terminal reconnect paused after 20 attempts]\x1b[0m\r\n');
-        return;
+        if (this.reconnectAttempts === 4) {
+          this._write('\r\n\x1b[2m[terminal reconnect slowed until the agent starts]\x1b[0m\r\n');
+        }
+        delay = 15000;
+      } else if (this._lastCtrlEvent === 'pty_closed' && this.reconnectAttempts > 20) {
+        if (this.reconnectAttempts === 21) {
+          this._write('\r\n\x1b[2m[terminal reconnect slowed after 20 attempts]\x1b[0m\r\n');
+        }
+        delay = 15000;
       }
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-      const delay = Math.min(5000, Math.round(800 * Math.pow(1.35, this.reconnectAttempts - 1)));
       this.reconnectTimer = setTimeout(() => this._connect(), delay);
     });
 

@@ -828,7 +828,13 @@ export default class SkillsPanel {
     if (this._patchLoading === alias) return;
     this._patchLoading = alias;
     this._json(`/api/plugins/skills/catalog/${encodeURIComponent(alias)}`)
-      .then(d => { this._patchLoading = null; if (d && !d.error) { this.patchDetail = d; this._render(); } })
+      .then(d => {
+        if (this._patchLoading === alias) this._patchLoading = null;
+        if (this.patchSkill === alias && d && !d.error) {
+          this.patchDetail = d;
+          this._render();
+        }
+      })
       .catch(() => { this._patchLoading = null; });
   }
 
@@ -1024,6 +1030,8 @@ export default class SkillsPanel {
 
   async _select(key, group) {
     this.selectedKey = key;
+    const token = (this._selectToken || 0) + 1;
+    this._selectToken = token;
     const g = group || this._findSelected();
     const rep = g?.deployments?.[0] || g;
     this.detail = rep;
@@ -1031,7 +1039,10 @@ export default class SkillsPanel {
     if (!rep?.id) return;
     try {
       const data = await this._json(`/api/plugins/skills/skills/${encodeURIComponent(rep.id)}`);
-      if (!data.error) { this.detail = data; this._render(); }
+      if (this._selectToken === token && this.selectedKey === key && !data.error) {
+        this.detail = data;
+        this._render();
+      }
     } catch (_) {}
   }
 

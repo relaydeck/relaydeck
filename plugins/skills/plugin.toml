@@ -1,7 +1,7 @@
 [plugin]
 name = "skills"
 version = "0.1.0"
-description = "Skill inventory + management: discover, validate, and materialize agent skills across workspaces and harnesses; read-only view of codex skills."
+description = "Skill inventory + management: list, import, and materialize agent skills across workspaces and harnesses; read-only view of codex skills."
 author = "relaydeck"
 license = "MIT"
 category = "infrastructure"
@@ -28,6 +28,7 @@ declared_capabilities = [
 
 [plugin.settings]
 scan_interval_seconds = { type = "number", default = 300.0, description = "Seconds between background skill inventory rescans (cache refresh + change events)." }
+managed_import_check_interval_seconds = { type = "number", default = 3600.0, description = "Minimum seconds between upstream checks for Relaydeck-managed Git skill imports. Checks mark update state; they do not auto-apply updates." }
 include_codex = { type = "boolean", default = true, description = "Include ~/.codex/skills (+ .system) in the read-only inventory." }
 include_claude = { type = "boolean", default = true, description = "Include Claude Code skills (~/.claude/skills + per-workspace .claude/skills) in the read-only inventory." }
 inject_plugin_authoring_skill = { type = "boolean", default = true, description = "Materialize both bundled skills (relaydeck-fleet orientation + relaydeck-plugin-dev) into every workspace. Off → agents lose the fleet quick-reference and the plugin-authoring how-to." }

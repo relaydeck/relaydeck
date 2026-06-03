@@ -883,6 +883,25 @@ def create_app(config_home: Path | None = None) -> FastAPI:
 
     # ── Agent endpoints ──────────────────────────────────────────
 
+    _bg_restart_tasks: set = set()  # keep bulk-restart tasks alive until done
+
+    def _with_restart_state(agent: dict) -> dict:
+        """Attach `restart_pending` + `pending_changes` (what changed since
+        spawn) and drop the internal running_config snapshot. Only running
+        agents can be pending — a stopped one applies edits on next start."""
+        rc = agent.pop("running_config", None)
+        state = {"restart_pending": False, "pending_changes": []}
+        if agent.get("status") == "running" and rc:
+            try:
+                from relaydeck import restart_state as _rs
+                desired = _rs.snapshot_for_agent(orch.config_home, orch.db_path, agent["id"])
+                state = _rs.restart_state(rc, desired)
+            except Exception:
+                pass
+        agent["restart_pending"] = state["restart_pending"]
+        agent["pending_changes"] = state["pending_changes"]
+        return agent
+
     @app.get("/api/agents")
     async def list_agents(workspace: str | None = None):
         """List agents, optionally filtered to one workspace.
@@ -895,7 +914,7 @@ def create_app(config_home: Path | None = None) -> FastAPI:
         agents = orch.list_agents()
         if workspace is not None and workspace != "":
             agents = [a for a in agents if (a.get("workspace") or "") == workspace]
-        return agents
+        return [_with_restart_state(a) for a in agents]
 
     # IMPORTANT: /api/agents/find is registered before /api/agents/{agent_id}
     # so FastAPI's route matcher catches the literal `find` first
@@ -959,7 +978,7 @@ def create_app(config_home: Path | None = None) -> FastAPI:
         agent = orch.get_agent(agent_id)
         if not agent:
             raise HTTPException(404, f"Agent {agent_id} not found")
-        return agent
+        return _with_restart_state(agent)
 
     @app.get("/api/agents/{agent_id}/stats")
     async def agent_stats(agent_id: str):
@@ -1346,6 +1365,60 @@ def create_app(config_home: Path | None = None) -> FastAPI:
             db_path=orch.db_path,
         )
         return {"id": agent_id, "status": "restarted"}
+
+    @app.post("/api/agents/restart")
+    async def restart_agents_bulk(request: Request):
+        """Bulk 'restart to apply' — restart affected/stale agents in one call.
+
+        Body filters (AND together; omit for "all running"):
+          {"ids": [...]}          only these agents
+          {"workspace": "x"}      only this workspace
+          {"only_pending": true}  only agents whose config is behind (stale)
+          {"session": "resume"|"fresh"}  session intent (default: resume)
+
+        Restarts run in the background (sequential) so the call returns fast;
+        the response lists the targets. Restarting interrupts running work —
+        callers must confirm first."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        ids = body.get("ids")
+        workspace = body.get("workspace")
+        only_pending = bool(body.get("only_pending"))
+        session = body.get("session") or "resume"
+
+        targets = []
+        for a in (_with_restart_state(x) for x in orch.list_agents()):
+            if a.get("status") != "running":
+                continue
+            if ids is not None and a["id"] not in ids:
+                continue
+            if workspace and (a.get("workspace") or "") != workspace:
+                continue
+            if only_pending and not a.get("restart_pending"):
+                continue
+            targets.append(a["id"])
+
+        identity = _audit_identity(request)
+        source_ip = _audit_source_ip(request)
+
+        async def _run():
+            for aid in targets:
+                try:
+                    await asyncio.to_thread(orch.restart_agent, aid, session=session)
+                    audit.record(
+                        audit.actions.AGENT_START, target=aid,
+                        identity=identity, source_ip=source_ip, db_path=orch.db_path,
+                    )
+                except Exception:
+                    pass
+
+        if targets:
+            task = asyncio.create_task(_run())
+            _bg_restart_tasks.add(task)
+            task.add_done_callback(_bg_restart_tasks.discard)
+        return {"restarting": targets, "count": len(targets)}
 
     @app.post("/api/agents/{agent_id}/uploads")
     async def upload_to_agent(agent_id: str, file: UploadFile):

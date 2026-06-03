@@ -4,7 +4,8 @@ Wraps Anthropic's `claude` CLI. Claude Code 2.x has a native Agent Skills
 system, so relaydeck materializes its workspace + plugin skills into a
 session-scoped Claude Code *plugin dir* and passes `--plugin-dir`. That makes
 them load the native way — they appear in `/skills`, are namespaced
-`/relaydeck:<name>`, and use progressive disclosure (the model sees each
+`/skills:<name>` (a neutral namespace, so imported/third-party skills aren't
+branded as relaydeck's), and use progressive disclosure (the model sees each
 skill's name + description, loading the body on demand) instead of every
 SKILL.md body being inlined into `--append-system-prompt` (the old workaround,
 from before `claude` had a skill flag — it bloated the prompt and never showed
@@ -407,7 +408,7 @@ class ClaudeCodeAgent(HarnessAgent):
         skills so `claude` loads them natively via `--plugin-dir`:
 
             runtime/claude-plugin/
-              .claude-plugin/plugin.json   {"name": "relaydeck", ...}
+              .claude-plugin/plugin.json   {"name": "skills", ...}
               skills/<name>/  ->  symlink to the materialized skill dir
 
         Skill sources match pi/codex/opencode so an operator gets the SAME set
@@ -437,9 +438,13 @@ class ClaudeCodeAgent(HarnessAgent):
         (plugin_dir / ".claude-plugin").mkdir(parents=True, exist_ok=True)
         skills_dir = plugin_dir / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
+        # Plugin name = the `/skills` namespace prefix Claude Code stamps on
+        # every skill here. Use a neutral "skills" so injected third-party /
+        # user-authored skills (grill-me, …) aren't branded as relaydeck's —
+        # relaydeck only *delivers* them, it doesn't own them.
         (plugin_dir / ".claude-plugin" / "plugin.json").write_text(json.dumps({
-            "name": "relaydeck",
-            "description": "relaydeck workspace + plugin skills (messaging, dashboard, theme, …)",
+            "name": "skills",
+            "description": "Skills delivered into this workspace by relaydeck (relaydeck-managed + user-authored + imported).",
             "version": "0.1.0",
         }, indent=2))
 

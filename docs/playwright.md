@@ -147,6 +147,45 @@ workspaces|appearance|skills|github|telegram|external), `?agent=<id>`,
   outbound; operator sends staged DMs when prompted. If the test looks stuck,
   your :8765 daemon is probably stealing getUpdates — use LIVE_DAEMON=1.
 
+## Skills lens (`?lens=skills:skills&section=inventory|workspace|vendor|import|inject`)
+- Nav sections: Active (`section=inventory`, consolidated by skill — `N ws`),
+  Workspaces, Vendor (read-only), Add skill (`import`), Inject (`inject`).
+- **Inject patch bay** (`section=inject`): bipartite wiring board. Skills are
+  `.sk-pnode.skill` (left, `.sel` when selected), workspaces `.sk-pnode.ws`
+  (right, `.on` when the selected skill is injected there); the `.pn-sub` line on
+  a ws node lists harness types (`claude-code·1 pi·2 …`). Wires are SVG `<path>`
+  in `.sk-wires` (`.wire.on` = selected skill's injections, accent; `.wire.dim`
+  = other skills). Geometry is deterministic (56px pitch), painted post-render in
+  `_paintWires()` via `svg.innerHTML` — no DOM measurement.
+- Click a skill (`_selectPatch`) → lights its wires + lazy-loads
+  `GET /api/plugins/skills/catalog/<alias>` (meta + SKILL.md body + deployments)
+  into the `.sk-patch-detail` panel below (Inject all / Remove all / mode /
+  Check updates / Remove from catalog + SKILL.md preview).
+- Click a ws node (`_togglePatch`) → `POST /deploy` (patch) or `/unlink`
+  (unpatch) for the selected skill; on-disk = symlink at
+  `workspaces/<ws>/skills/<alias>`. Detail panel scrolls inside `.sk-body`.
+- "Centralize for injection" button in the Active/Vendor detail pane →
+  `POST /api/plugins/skills/catalog` (promotes a scattered skill into the
+  catalog, then it appears in Inject). Not shown for `runtime-plugin` skills.
+- Gotcha: removing a catalog skill unlinks workspace `_catalog`, whose dir is
+  `plugin-data/skills/catalog/<alias>` (NOT `workspaces/_catalog/...`).
+
+## Restart to apply (a running agent is behind its edited config)
+- Backend: `GET /api/agents{,/<id>}` carry `restart_pending` + `pending_changes`
+  ([{component, summary}]) for running agents; `POST /api/agents/restart`
+  `{ids?|workspace?|only_pending?}` bulk-restarts in the background.
+- **Agent header chip** (`lenses/agents.js`): amber `[data-act="restart-apply"]`
+  (`.dhdr-restart`) in the chip rail; tooltip lists the changes. Click morphs it
+  INLINE to `.dhdr-restart.confirming` with `.dhdr-restart-yes`/`.dhdr-restart-no`
+  (no native dialog). Patched imperatively in `_patchDetailHeader` — terminal
+  never remounts. Hidden when not pending.
+- **Skills lens** (`section=inject`): header `.sk-stat-pending` chip; `.sk-pending`
+  banner with `Restart affected` → inline `.sk-pending-confirm`; `.pn-stale` amber
+  pill on workspace nodes with stale agents.
+- To force a pending state in a test: restart an agent (captures a snapshot),
+  then add/remove a skill in its workspace (the workspace needs the `skills`
+  plugin for user-authored skills to count).
+
 ## Workers lens (`?lens=workers`)
 - Sidebar sections: `.wk-side-section` (Configurable · N / System · N).
 - Configurable rows: `.wk-side-row.cfg` (name in `.name`, trigger in `.sub`).

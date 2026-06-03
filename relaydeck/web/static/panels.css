@@ -165,6 +165,19 @@
   color: var(--t-2); flex-shrink: 0; max-width: 100%;
 }
 .dhdr-chip-group.dim { color: var(--t-3); background: var(--bg-2); }
+/* Pass-through mount for the live-patched git chip — the rendered
+   .dhdr-chip-group--git inside is the actual pill, so this wrapper must not
+   draw its own (which produced a pill-in-pill double box). */
+.dhdr-chip-mount { display: contents; }
+.dhdr-chip-group--git,
+.dhdr-chip-group--model {
+  /* Hug content; only shrink (and truncate the branch) when the rail is
+     tight — never grow to fill the row, which balloons the pill with empty
+     space around short values like a model name. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(520px, 100%);
+}
 .dhdr-chip-group--model .dhdr-chip-branch { color: var(--acc); font-weight: 500; }
 .dhdr-chip-group--git.is-wt { border-color: var(--acc-line); background: var(--acc-soft); color: var(--acc); }
 .dhdr-chip-group--git.is-wt .dhdr-chip-kind { color: var(--acc); }
@@ -174,9 +187,31 @@
 .dhdr-chip-kind { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--t-3); }
 .dhdr-chip-branch {
   font-size: 11px; font-weight: 500; color: var(--t-1);
-  max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+  max-width: clamp(96px, 24vw, 220px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dhdr-chip-meta { font-size: 10px; color: var(--t-3); }
+/* "restart to apply" — a running agent is behind its edited config. */
+.dhdr-restart {
+  cursor: pointer; border-color: var(--warn); color: var(--warn);
+  background: var(--bg-1); font-family: var(--f-mono);
+}
+.dhdr-restart:hover { background: var(--bg-2); }
+.dhdr-restart .dhdr-chip-label { color: var(--warn); }
+.dhdr-restart .dhdr-chip-meta {
+  color: var(--bg-0); background: var(--warn); border-radius: 999px;
+  padding: 0 5px; min-width: 14px; text-align: center; font-weight: 600;
+}
+.dhdr-restart.confirming { cursor: default; background: var(--bg-2); gap: 5px; }
+.dhdr-restart-yes, .dhdr-restart-no {
+  font: 600 10px var(--f-mono); border: 1px solid var(--warn);
+  border-radius: 999px; padding: 1px 8px; cursor: pointer; line-height: 1.5;
+}
+.dhdr-restart-yes { background: var(--warn); color: var(--bg-0); }
+.dhdr-restart-yes:hover { filter: brightness(1.1); }
+.dhdr-restart-no { background: transparent; color: var(--t-3); border-color: var(--line-3); padding: 1px 6px; }
+.dhdr-restart-no:hover { color: var(--t-1); }
 .dhdr-chip-dot {
   width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
 }

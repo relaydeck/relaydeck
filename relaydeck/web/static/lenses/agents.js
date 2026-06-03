@@ -176,6 +176,7 @@ export class AgentsLens extends RelayLens {
       badge.textContent = status;
     }
     this._renderGitChips(pane.querySelector('[data-git-chips]'), agent);
+    this._renderRestartChip(pane.querySelector('[data-restart-chip]'), agent);
     const ws = (this.host.state.workspaces || []).find((w) => w.name === agent.workspace);
     const nPlugins = ws ? (ws.plugins || []).length : 0;
     const plg = pane.querySelector('[data-plg-chip]');
@@ -271,7 +272,44 @@ export class AgentsLens extends RelayLens {
     render(this._gitHeaderChips(agent), el);
   }
 
+  // "Restart to apply" — a running agent is behind its edited config. The
+  // chip lists what changed (tooltip) and confirms INLINE (morphs into a
+  // tiny restart?/✕ — no blocking dialog) before restarting. Only shown for
+  // running agents whose captured snapshot diverges from desired.
+  _restartChip(agent) {
+    const changes = (agent && agent.pending_changes) || [];
+    if (!agent || !agent.restart_pending || !changes.length) return nothing;
+    const title = 'Changed since this agent started:\n· '
+      + changes.map((c) => c.summary).join('\n· ');
+    if (this._confirmRestartId === agent.id) {
+      return html`
+        <span class="dhdr-chip-group dhdr-restart confirming" title=${title}>
+          <span class="dhdr-chip-label">restart now?</span>
+          <button class="dhdr-restart-yes" @click=${() => { this._confirmRestartId = null; this.host.controlAgent(agent.id, 'restart'); }}>restart</button>
+          <button class="dhdr-restart-no" title="cancel" @click=${() => { this._confirmRestartId = null; this._rerenderRestartChip(agent); }}>✕</button>
+        </span>`;
+    }
+    return html`
+      <button class="dhdr-chip-group dhdr-restart" data-act="restart-apply" title=${title + '\n\nClick to restart and apply (interrupts current work).'}
+        @click=${() => { this._confirmRestartId = agent.id; this._rerenderRestartChip(agent); }}>
+        ${icon('restart', 10)}
+        <span class="dhdr-chip-label">restart to apply</span>
+        <span class="dhdr-chip-meta">${changes.length}</span>
+      </button>`;
+  }
+
+  _renderRestartChip(el, agent) {
+    if (!el) return;
+    render(this._restartChip(agent), el);
+  }
+
+  _rerenderRestartChip(agent) {
+    const el = this._detailRoot?.querySelector('.pane [data-restart-chip]');
+    if (el) this._renderRestartChip(el, agent);
+  }
+
   _renderAgentDetail(root, agent) {
+    this._confirmRestartId = null;  // reset any inline restart confirm on (re)open
     const status = visualStatus(agent);
     const isRunning = agent.status === 'running';
     const ws = (this.host.state.workspaces || []).find((w) => w.name === agent.workspace);
@@ -294,11 +332,12 @@ export class AgentsLens extends RelayLens {
             <h1 class="dhdr-name truncate">${agent.id}</h1>
             <div class="dhdr-row dhdr-row--tight">
               <span class="sbadge ${status}">${status}</span>
+              <span data-restart-chip></span>
               <span class="dhdr-chip-group dhdr-chip-group--model" data-model-chip style="${modelRef ? '' : 'display:none'}">
                 <span class="dhdr-chip-label">model</span>
                 <span class="dhdr-chip-branch" data-model-name>${modelRef || '—'}</span>
               </span>
-              <span class="dhdr-chip-group dhdr-chip-group--git" data-git-chips></span>
+              <span class="dhdr-chip-mount" data-git-chips></span>
               <span class="dhdr-chip-group dim" data-plg-chip style="${nPlugins ? '' : 'display:none'}">
                 <span class="dhdr-chip-label">plugins</span>
                 <span class="dhdr-chip-meta">${nPlugins}</span>
@@ -324,6 +363,7 @@ export class AgentsLens extends RelayLens {
 
     // Imperative population of the live/procedural regions (UNCHANGED logic).
     this._renderGitChips(pane.querySelector('[data-git-chips]'), agent);
+    this._renderRestartChip(pane.querySelector('[data-restart-chip]'), agent);
     this._renderStats(pane.querySelector('[data-stats]'), agent);
     if (agent.type === 'relaydeck') this._renderNativePiBanner(pane.querySelector('[data-native-pi-banner]'));
     this._renderSubtabs(pane.querySelector('[data-subtabs]'), agent);

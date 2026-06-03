@@ -1,10 +1,10 @@
 """
-Bundled Skills plugin — inventory, validation, and the generic consumer
+Bundled Skills plugin — inventory, import, and the generic consumer
 of `[plugin.skills]`.
 
 This is the orchestrator layer the raw harness injection paths never had:
 it answers *what skills exist, where they came from, which agents will
-see them, whether they validate, and what changed*. The materialization
+see them, and what changed*. The materialization
 primitives live in `relaydeck.skills` (pure, harness-shared); this plugin
 drives them on lifecycle events and exposes a lens, CLI, API, and a
 periodic rescan worker.
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 class SkillsPlugin(Plugin):
     workspace_scoped = False
     description = (
-        "Skill inventory + management: discover, validate, and "
+        "Skill inventory + management: list, import, and "
         "materialize agent skills across workspaces and harnesses."
     )
 
@@ -87,6 +87,15 @@ class SkillsPlugin(Plugin):
             return max(10.0, float(self.host.settings.get("scan_interval_seconds", 300.0)))
         except Exception:
             return 300.0
+
+    def _managed_import_check_interval(self) -> float:
+        try:
+            return max(
+                60.0,
+                float(self.host.settings.get("managed_import_check_interval_seconds", 3600.0)),
+            )
+        except Exception:
+            return 3600.0
 
     def _include_codex(self) -> bool:
         try:
@@ -134,7 +143,7 @@ class SkillsPlugin(Plugin):
     def _start_worker(self) -> None:
         try:
             self._worker = self.host.workers.spawn(
-                "scan",
+                "inventory-sync",
                 self._scan_tick,
                 interval=self._scan_interval(),
                 config={"scan_interval_s": self._scan_interval()},
@@ -143,7 +152,8 @@ class SkillsPlugin(Plugin):
                     "Re-syncs plugin-contributed skill files and refreshes the "
                     "skills_cache inventory each interval, so a SKILL.md edited "
                     "on disk or a skill installed out-of-band surfaces within "
-                    "one tick. Each tick is idempotent (hash-skipped writes)."
+                    "one tick. Managed Git imports are checked on a separate "
+                    "low-frequency cadence for upstream updates."
                 ),
             )
         except Exception:
@@ -155,6 +165,11 @@ class SkillsPlugin(Plugin):
         # a codex skill installed out-of-band, or a workspace that
         # appeared without an event all surface within one interval.
         manager.sync_all(self.config_home)
+        manager.refresh_managed_imports(
+            self.config_home,
+            self.db_path,
+            min_interval_s=self._managed_import_check_interval(),
+        )
         self._rescan()
 
     def _rescan(self) -> dict:

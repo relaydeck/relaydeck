@@ -133,6 +133,10 @@ class SkillRef:
     frontmatter: dict[str, Any] = field(default_factory=dict)
     size: int = 0
     mtime: float = 0.0
+    body_chars: int = 0
+    token_estimate: int = 0
+    risk_level: str = "low"
+    risk_flags: list[str] = field(default_factory=list)
 
     @property
     def injectable(self) -> bool:
@@ -158,6 +162,10 @@ class SkillRef:
             "frontmatter": self.frontmatter,
             "size": self.size,
             "mtime": self.mtime,
+            "body_chars": self.body_chars,
+            "token_estimate": self.token_estimate,
+            "risk_level": self.risk_level,
+            "risk_flags": list(self.risk_flags),
         }
         return d
 

@@ -3005,10 +3005,11 @@ def _remove_workspace_via_daemon(name: str) -> tuple[bool, str]:
     so the caller should fall back to a direct config edit."""
     import urllib.error
     import urllib.request
+    from urllib.parse import quote
 
     from relaydeck.state import get_daemon_url
 
-    url = get_daemon_url().rstrip("/") + f"/api/workspaces/{name}"
+    url = get_daemon_url().rstrip("/") + f"/api/workspaces/{quote(name, safe='')}"
     req = urllib.request.Request(url, headers=_daemon_auth_headers(), method="DELETE")
     try:
         with urllib.request.urlopen(req, timeout=5, context=_daemon_ssl_context()) as r:
@@ -3028,10 +3029,11 @@ def _patch_workspace_plugins_via_daemon(name: str, plugins: list[str]) -> tuple[
     live without waiting for restart."""
     import urllib.error
     import urllib.request
+    from urllib.parse import quote
 
     from relaydeck.state import get_daemon_url
 
-    url = get_daemon_url().rstrip("/") + f"/api/workspaces/{name}"
+    url = get_daemon_url().rstrip("/") + f"/api/workspaces/{quote(name, safe='')}"
     data = json.dumps({"plugins": plugins}).encode()
     headers = {"Content-Type": "application/json", **_daemon_auth_headers()}
     req = urllib.request.Request(url, data=data, headers=headers, method="PATCH")

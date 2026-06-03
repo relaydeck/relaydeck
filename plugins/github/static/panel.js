@@ -244,6 +244,13 @@ repo: owner/repo
 # How often to poll (seconds). Plugin setting is the fallback.
 poll_interval_s: 30
 
+# Event source (optional, default: auto):
+#   auto   — reliable /issues polling, unless a rule needs an events-only
+#            type (comments, pushes…), then the activity feed.
+#   issues — always /issues (real-time; issue/PR opened/closed/labeled only).
+#   events — the /events activity feed (richer, but cached + laggy).
+# source: auto
+
 rules:
   # When a PR is opened, ping a reviewer agent.
   - name: pr-opened-review

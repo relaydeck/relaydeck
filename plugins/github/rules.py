@@ -16,6 +16,7 @@ version is:
 
     repo: owner/name
     poll_interval_s: 30
+    source: auto              # auto (default) | issues | events
 
     rules:
       - name: bug-to-triager
@@ -60,11 +61,35 @@ class Rule:
     do: list[dict[str, Any]] = field(default_factory=list)
 
 
+# Event types the reliable issues-since source can synthesize by diffing
+# issue/PR state. Rules that require anything else (comments, pushes, forks…)
+# only the activity feed provides them.
+ISSUES_SOURCE_EVENTS = frozenset({"IssuesEvent", "PullRequestEvent"})
+
+
 @dataclass(frozen=True)
 class RulesConfig:
     repo: str
     poll_interval_s: float
     rules: tuple[Rule, ...]
+    # "issues" — poll /issues?since= and diff state (reliable, real-time;
+    #            covers opened/closed/reopened/labeled/unlabeled for issues+PRs).
+    # "events" — the /events activity feed (richer: comments/pushes/actor, but
+    #            cached + eventually-consistent, so it lags and 404s).
+    # "auto"   — issues, unless a rule needs an events-only type (then events).
+    source: str = "auto"
+
+    def effective_source(self) -> str:
+        if self.source in ("issues", "events"):
+            return self.source
+        # auto: pick the reliable issues source unless a rule explicitly
+        # requires an event type only the activity feed can produce.
+        for rule in self.rules:
+            ev = rule.when.get("event")
+            needs = [ev] if isinstance(ev, str) else (ev if isinstance(ev, list) else [])
+            if any(e not in ISSUES_SOURCE_EVENTS for e in needs):
+                return "events"
+        return "issues"
 
 
 # ── Loading ─────────────────────────────────────────────────────────
@@ -99,6 +124,10 @@ def load_config(path: Path) -> RulesConfig | None:
     if interval < 1.0:
         raise ValueError("`poll_interval_s` must be >= 1.0")
 
+    source = data.get("source", "auto")
+    if source not in ("auto", "issues", "events"):
+        raise ValueError("`source` must be one of: auto, issues, events")
+
     rules_raw = data.get("rules", [])
     if not isinstance(rules_raw, list):
         raise ValueError("`rules` must be a list")
@@ -114,7 +143,9 @@ def load_config(path: Path) -> RulesConfig | None:
         if not isinstance(do, list):
             raise ValueError(f"rule {name!r}: `do` must be a list")
         compiled.append(Rule(name=name, when=dict(when), do=list(do)))
-    return RulesConfig(repo=repo, poll_interval_s=interval, rules=tuple(compiled))
+    return RulesConfig(
+        repo=repo, poll_interval_s=interval, rules=tuple(compiled), source=source,
+    )
 
 
 # ── Matching ────────────────────────────────────────────────────────

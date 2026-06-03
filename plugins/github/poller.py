@@ -67,6 +67,13 @@ class Cursor:
     # CreateEvent can carry a higher id than a later IssuesEvent), so a
     # max-id watermark silently swallows every newer-but-lower-id event.
     seen_ids: list[str] = field(default_factory=list)
+    # ── issues-since source only ──
+    # The `since` watermark for the next /issues query, and the last-known
+    # state of each issue/PR (`{number: {"state": ..., "labels": [...]}}`).
+    # Synthesized events are deduped by diffing this state — once stored, an
+    # unchanged issue produces nothing, so dedup is idempotent (no seen-set).
+    since: str | None = None
+    issues: dict[str, Any] = field(default_factory=dict)
 
 
 def cursor_path(config_home: Path, workspace: str) -> Path:
@@ -84,11 +91,14 @@ def load_cursor(path: Path) -> Cursor:
     except (OSError, ValueError):
         return Cursor()
     seen = data.get("seen_ids")
+    issues = data.get("issues")
     return Cursor(
         last_event_id=data.get("last_event_id"),
         last_poll_ts=data.get("last_poll_ts"),
         last_error=data.get("last_error"),
         seen_ids=[str(x) for x in seen] if isinstance(seen, list) else [],
+        since=data.get("since"),
+        issues=issues if isinstance(issues, dict) else {},
     )
 
 
@@ -99,6 +109,8 @@ def save_cursor(path: Path, cursor: Cursor) -> None:
         "last_poll_ts": cursor.last_poll_ts,
         "last_error": cursor.last_error,
         "seen_ids": cursor.seen_ids[:_SEEN_CAP],
+        "since": cursor.since,
+        "issues": cursor.issues,
     }
     atomic_write_text(path, json.dumps(payload, indent=2))
 
@@ -174,6 +186,128 @@ def fetch_events(
     if not isinstance(out, list):
         return PollResult(events=[], error="gh api returned non-list response")
     return PollResult(events=out, error=None)
+
+
+def fetch_issues_since(
+    repo: str,
+    since: str | None,
+    *,
+    gh_binary: str = "gh",
+    per_page: int = 100,
+    timeout: float = 30.0,
+) -> PollResult:
+    """Fetch issues + PRs updated since `since` (ISO8601), oldest-first.
+
+    Hits `GET /repos/<repo>/issues` — a core, uncached endpoint (the events
+    feed, by contrast, is delayed and eventually-consistent). `/issues`
+    includes PRs (they carry a `pull_request` key). On bootstrap (`since`
+    None) it returns the current open+recent issues to seed state without
+    firing. `PollResult.events` carries raw issue objects here, not events;
+    the caller diffs them into synthesized events."""
+    args = [
+        gh_binary, "api", "-X", "GET", f"repos/{repo}/issues",
+        "-F", "state=all", "-F", "sort=updated", "-F", "direction=asc",
+        "-F", f"per_page={per_page}",
+    ]
+    if since:
+        args += ["-F", f"since={since}"]
+    try:
+        proc = subprocess.run(args, capture_output=True, timeout=timeout, check=False)
+    except FileNotFoundError:
+        msg = f"gh binary not found at {gh_binary!r}"
+        logger.warning("github: %s", msg)
+        return PollResult(events=[], error=msg)
+    except subprocess.TimeoutExpired:
+        msg = f"gh api timed out after {timeout}s"
+        logger.warning("github: %s", msg)
+        return PollResult(events=[], error=msg)
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+        msg = f"gh api failed (rc={proc.returncode}): {stderr[:200]}"
+        logger.warning("github: %s", msg)
+        return PollResult(events=[], error=msg)
+    try:
+        # strict=False: issue/PR bodies legitimately contain raw control chars.
+        out = json.loads(proc.stdout, strict=False)
+    except json.JSONDecodeError as exc:
+        msg = f"gh api returned non-JSON: {exc}"
+        logger.warning("github: %s", msg)
+        return PollResult(events=[], error=msg)
+    if not isinstance(out, list):
+        return PollResult(events=[], error="gh api returned non-list response")
+    return PollResult(events=out, error=None)
+
+
+def _issue_snapshot(issue: dict[str, Any]) -> dict[str, Any]:
+    """The diff-relevant state of an issue/PR: open/closed + its label set."""
+    labels = sorted(
+        str(lbl.get("name"))
+        for lbl in (issue.get("labels") or [])
+        if isinstance(lbl, dict) and lbl.get("name")
+    )
+    return {"state": str(issue.get("state") or ""), "labels": labels}
+
+
+def _synth_event(repo: str, issue: dict[str, Any], action: str,
+                 *, label: str | None = None) -> dict[str, Any]:
+    """Build an event dict shaped like the activity feed's IssuesEvent /
+    PullRequestEvent, so the rules engine + templates work unchanged.
+
+    Actor is best-effort: /issues gives the issue author, not who performed
+    a later label/state change. Rules matching on `actor` for label changes
+    should use `source: events`."""
+    is_pr = "pull_request" in issue
+    etype = "PullRequestEvent" if is_pr else "IssuesEvent"
+    payload: dict[str, Any] = {"action": action, "issue": issue}
+    if is_pr:
+        payload["pull_request"] = issue
+    if label is not None:
+        payload["label"] = {"name": label}
+    num = issue.get("number")
+    return {
+        "id": f"issue:{num}:{action}:{label or ''}:{issue.get('updated_at') or ''}",
+        "type": etype,
+        "actor": {"login": (issue.get("user") or {}).get("login")},
+        "repo": {"name": repo},
+        "created_at": issue.get("updated_at"),
+        "payload": payload,
+    }
+
+
+def diff_issue_events(
+    repo: str, issues: list[dict[str, Any]], prior: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Diff fetched issues/PRs against their last-known state and synthesize
+    the events that happened. Returns (events oldest-first, updated state).
+
+    Per issue: never seen → `opened`; state flip → `closed`/`reopened`; label
+    set delta → `labeled`/`unlabeled` (one event per label). Idempotent: the
+    returned state is persisted, so an unchanged issue yields nothing next
+    time (the diff IS the dedup)."""
+    events: list[dict[str, Any]] = []
+    state = dict(prior)
+    for issue in issues:
+        num = issue.get("number")
+        if num is None:
+            continue
+        key = str(num)
+        snap = _issue_snapshot(issue)
+        was = prior.get(key)
+        if was is None:
+            events.append(_synth_event(repo, issue, "opened"))
+        else:
+            if snap["state"] != was.get("state"):
+                action = "closed" if snap["state"] == "closed" else "reopened"
+                events.append(_synth_event(repo, issue, action))
+            old_labels = set(was.get("labels") or [])
+            new_labels = set(snap["labels"])
+            for lbl in sorted(new_labels - old_labels):
+                events.append(_synth_event(repo, issue, "labeled", label=lbl))
+            for lbl in sorted(old_labels - new_labels):
+                events.append(_synth_event(repo, issue, "unlabeled", label=lbl))
+        state[key] = snap
+    events.sort(key=lambda e: str(e.get("created_at") or ""))
+    return events, state
 
 
 # ── Worker ──────────────────────────────────────────────────────────
@@ -267,6 +401,56 @@ class GithubPoller:
         if config is None:
             return  # no github.yaml yet — poll loop stays alive as a no-op
 
+        if config.effective_source() == "issues":
+            self._tick_issues(config, worker)
+        else:
+            self._tick_events(config, worker)
+
+    def _tick_issues(self, config: RulesConfig, worker: Any) -> None:
+        """Reliable source: poll /issues?since= and diff state into events.
+
+        The issue-state map IS the dedup (an unchanged issue diffs to nothing),
+        so this path doesn't use the seen-id set."""
+        # Capture the watermark BEFORE fetching, so anything updated during the
+        # request is caught next poll. State-diffing makes the overlap a no-op.
+        poll_started = _now_iso()
+        cursor = load_cursor(self._cursor_path)
+        result = fetch_issues_since(config.repo, cursor.since, gh_binary=self.gh_binary)
+        if result.error is not None:
+            with contextlib.suppress(Exception):
+                worker.log(f"poll failed: {result.error}", level="warn")
+            self._save_cursor(error=result.error)
+            return
+
+        issues = result.events  # raw issue/PR objects on this path
+
+        # Bootstrap: no watermark yet → record current state, fire nothing
+        # (don't replay history on first run).
+        if cursor.since is None and not cursor.issues:
+            _, state = diff_issue_events(config.repo, issues, {})
+            with contextlib.suppress(Exception):
+                worker.log(
+                    f"bootstrap: bookmarking {len(state)} issues/PRs "
+                    "(history skipped)"
+                )
+            self._save_cursor(error=None, since=poll_started, issues=state)
+            return
+
+        events, state = diff_issue_events(config.repo, issues, cursor.issues)
+        if not events:
+            with contextlib.suppress(Exception):
+                worker.log(f"polled {config.repo} — no new events", level="debug")
+            self._save_cursor(error=None, since=poll_started, issues=state)
+            return
+
+        with contextlib.suppress(Exception):
+            worker.log(f"got {len(events)} new events from {config.repo}")
+        for event in events:
+            self._emit_internal(str(event.get("type") or ""), event)
+            self._run_rules(config, event, worker)
+        self._save_cursor(error=None, since=poll_started, issues=state)
+
+    def _tick_events(self, config: RulesConfig, worker: Any) -> None:
         result = fetch_events(config.repo, gh_binary=self.gh_binary)
         if result.error is not None:
             with contextlib.suppress(Exception):
@@ -421,6 +605,8 @@ class GithubPoller:
         error: str | None = None,
         last_event_id: Any = _KEEP,
         seen_ids: Any = _KEEP,
+        since: Any = _KEEP,
+        issues: Any = _KEEP,
     ) -> None:
         current = load_cursor(self._cursor_path)
         new = Cursor(
@@ -430,6 +616,8 @@ class GithubPoller:
             last_poll_ts=_now_iso(),
             last_error=error,
             seen_ids=(current.seen_ids if seen_ids is self._KEEP else list(seen_ids)),
+            since=(current.since if since is self._KEEP else since),
+            issues=(current.issues if issues is self._KEEP else dict(issues)),
         )
         try:
             save_cursor(self._cursor_path, new)

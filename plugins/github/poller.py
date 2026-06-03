@@ -36,7 +36,7 @@ import contextlib
 import json
 import logging
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,12 @@ from relaydeck.automation import ActionContext, ActionError, dispatch
 from .rules import RulesConfig, evaluate, load_config
 
 logger = logging.getLogger(__name__)
+
+# How many recently-seen event ids to remember. GitHub caps a repo's events
+# feed at ~300 events / 90 days, so this comfortably covers the whole window
+# with headroom — every id currently in the feed stays remembered, so a poll
+# never re-fires an event that's still listed.
+_SEEN_CAP = 600
 
 
 # ── Cursor on disk ──────────────────────────────────────────────────
@@ -55,6 +61,12 @@ class Cursor:
     last_event_id: str | None = None
     last_poll_ts: str | None = None
     last_error: str | None = None
+    # The set of recently-seen event ids (most-recent first), bounded to
+    # _SEEN_CAP. This is the real dedup key. We do NOT use a numeric
+    # high-water-mark: GitHub event ids are NOT monotonic with time (a
+    # CreateEvent can carry a higher id than a later IssuesEvent), so a
+    # max-id watermark silently swallows every newer-but-lower-id event.
+    seen_ids: list[str] = field(default_factory=list)
 
 
 def cursor_path(config_home: Path, workspace: str) -> Path:
@@ -71,10 +83,12 @@ def load_cursor(path: Path) -> Cursor:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
         return Cursor()
+    seen = data.get("seen_ids")
     return Cursor(
         last_event_id=data.get("last_event_id"),
         last_poll_ts=data.get("last_poll_ts"),
         last_error=data.get("last_error"),
+        seen_ids=[str(x) for x in seen] if isinstance(seen, list) else [],
     )
 
 
@@ -84,6 +98,7 @@ def save_cursor(path: Path, cursor: Cursor) -> None:
         "last_event_id": cursor.last_event_id,
         "last_poll_ts": cursor.last_poll_ts,
         "last_error": cursor.last_error,
+        "seen_ids": cursor.seen_ids[:_SEEN_CAP],
     }
     atomic_write_text(path, json.dumps(payload, indent=2))
 
@@ -256,67 +271,65 @@ class GithubPoller:
         if result.error is not None:
             with contextlib.suppress(Exception):
                 worker.log(f"poll failed: {result.error}", level="warn")
-            # Preserve the existing cursor.last_event_id; only the error
-            # field changes. advance_to="__no_change__" is the sentinel
-            # that means "leave last_event_id alone".
+            # Record the error only; last_event_id + seen_ids keep their
+            # persisted values (the _KEEP sentinel default).
             self._save_cursor(error=result.error)
             return
 
         cursor = load_cursor(self._cursor_path)
         events = result.events
+        current_ids = [str(e.get("id") or "") for e in events if e.get("id")]
+        newest_id = current_ids[0] if current_ids else cursor.last_event_id
 
-        # Bootstrap: a fresh workspace with no cursor records the
-        # latest fetched event id WITHOUT firing rules. Otherwise the
-        # first poll would replay ~90 days of history through the
-        # action loop. We DO advance the cursor here — without that,
-        # every subsequent tick would stay in bootstrap mode and
-        # rules would never fire.
-        if cursor.last_event_id is None:
-            latest_id = self._latest_event_id(events)
-            if latest_id is not None:
-                with contextlib.suppress(Exception):
-                    worker.log(
-                        f"bootstrap: bookmarking {latest_id} ({len(events)} historical "
-                        "events skipped)"
-                    )
-            self._save_cursor(error=None, advance_to=latest_id)
+        # Bootstrap (fresh workspace) OR migrate (an old cursor written before
+        # seen-id tracking — it only has a numeric high-water-mark, which is
+        # unreliable because GitHub ids aren't monotonic). Either way: seed the
+        # seen-set with the CURRENT feed and fire no rules, so we neither
+        # replay ~90 days of history nor trust the stale watermark.
+        if not cursor.seen_ids:
+            reason = "bootstrap" if cursor.last_event_id is None else "migrate"
+            with contextlib.suppress(Exception):
+                worker.log(
+                    f"{reason}: bookmarking {len(current_ids)} events "
+                    "(historical events skipped)"
+                )
+            self._save_cursor(error=None, seen_ids=current_ids, last_event_id=newest_id)
             return
 
-        new_events = self._select_new(events, cursor.last_event_id)
+        seen = set(cursor.seen_ids)
+        new_events = [e for e in events if str(e.get("id") or "") not in seen]
         if not new_events:
-            # Successful poll with no new events: clear last_error and
-            # keep last_event_id where it was. Log a quiet heartbeat so
-            # the Workers lens shows the poller IS alive and working —
-            # "logs nothing" otherwise reads as "broken".
+            # Successful poll with no new events. Refresh the seen-set against
+            # the current feed (ids rotate as the window slides) and log a
+            # quiet heartbeat so the Workers lens shows the poller IS alive.
             with contextlib.suppress(Exception):
                 worker.log(f"polled {config.repo} — no new events", level="debug")
-            self._save_cursor(error=None)
+            self._save_cursor(
+                error=None,
+                seen_ids=_merge_seen(current_ids, cursor.seen_ids),
+                last_event_id=newest_id,
+            )
             return
+
+        # Fire oldest-first by actual event time (ids are not a reliable order),
+        # so a labeled-then-unlabeled pair never fires backwards.
+        new_events.sort(key=lambda e: (str(e.get("created_at") or ""), _id_key(e)))
 
         with contextlib.suppress(Exception):
             worker.log(f"got {len(new_events)} new events from {config.repo}")
 
-        last_seen = cursor.last_event_id
         for event in new_events:
-            ev_id = str(event.get("id") or "")
             ev_type = str(event.get("type") or "")
             self._emit_internal(ev_type, event)
             self._run_rules(config, event, worker)
-            if _event_id_gt(ev_id, last_seen):
-                last_seen = ev_id
 
-        self._save_cursor(error=None, advance_to=last_seen)
-
-    def _latest_event_id(self, events: list[dict[str, Any]]) -> str | None:
-        """Highest id across the fetched events. GitHub returns
-        newest-first, so events[0].id is usually it — but we walk the
-        list defensively in case the order ever changes."""
-        latest: str | None = None
-        for e in events:
-            eid = str(e.get("id") or "")
-            if _event_id_gt(eid, latest):
-                latest = eid
-        return latest
+        # Remember everything currently in the feed (covers the just-fired
+        # events too) plus prior history, bounded.
+        self._save_cursor(
+            error=None,
+            seen_ids=_merge_seen(current_ids, cursor.seen_ids),
+            last_event_id=newest_id,
+        )
 
     # ── helpers ─────────────────────────────────────────────────────
 
@@ -328,26 +341,6 @@ class GithubPoller:
             logger.warning("github: %s: %s", cfg_path, exc)
             self._save_cursor(error=f"config: {exc}")
             return None
-
-    def _select_new(
-        self, events: list[dict[str, Any]], last_id: str
-    ) -> list[dict[str, Any]]:
-        """Filter events newer than `last_id`, oldest first.
-
-        Bootstrap (`last_id is None`) is handled in `_tick` before
-        this is reached; by the time we get here we have a real
-        cursor to compare against.
-
-        GitHub returns events newest-first. We reverse so rule
-        actions fire in the order events actually happened — a
-        labeled-then-unlabeled pair shouldn't fire backwards."""
-        new = []
-        for e in events:
-            eid = str(e.get("id") or "")
-            if _event_id_gt(eid, last_id):
-                new.append(e)
-        new.reverse()
-        return new
 
     def _emit_internal(self, ev_type: str, event: dict[str, Any]) -> None:
         if self._emit_event is None or not ev_type:
@@ -420,19 +413,23 @@ class GithubPoller:
                             level="warn",
                         )
 
+    _KEEP = object()  # sentinel: leave a field at its current persisted value
+
     def _save_cursor(
         self,
         *,
         error: str | None = None,
-        advance_to: str | None = "__no_change__",
+        last_event_id: Any = _KEEP,
+        seen_ids: Any = _KEEP,
     ) -> None:
         current = load_cursor(self._cursor_path)
         new = Cursor(
             last_event_id=(
-                current.last_event_id if advance_to == "__no_change__" else advance_to
+                current.last_event_id if last_event_id is self._KEEP else last_event_id
             ),
             last_poll_ts=_now_iso(),
             last_error=error,
+            seen_ids=(current.seen_ids if seen_ids is self._KEEP else list(seen_ids)),
         )
         try:
             save_cursor(self._cursor_path, new)
@@ -445,19 +442,18 @@ def _now_iso() -> str:
     return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _event_id_gt(event_id: str, last_id: str | None) -> bool:
-    """True when `event_id` is newer than `last_id`.
-
-    GitHub REST event ids are numeric strings. Lexicographic comparison
-    breaks across digit-length boundaries (`"10000" < "9999"`), so use
-    integer ordering when both sides are parseable and keep a string
-    fallback for defensive compatibility.
-    """
-    if not event_id:
-        return False
-    if last_id is None:
-        return True
+def _id_key(event: dict[str, Any]) -> int:
+    """Numeric id for stable tie-breaking when two events share a
+    created_at second. Non-numeric ids sort as 0 (rare/defensive)."""
     try:
-        return int(event_id) > int(last_id)
+        return int(str(event.get("id") or ""))
     except (TypeError, ValueError):
-        return str(event_id) > str(last_id)
+        return 0
+
+
+def _merge_seen(current_ids: list[str], prior: list[str]) -> list[str]:
+    """Most-recent-first union of the current feed and prior history,
+    de-duped and bounded to _SEEN_CAP. Current feed ids go first so they
+    are never trimmed out (which would let a still-listed event re-fire);
+    older history that has scrolled off the feed ages out past the cap."""
+    return list(dict.fromkeys([*current_ids, *prior]))[:_SEEN_CAP]

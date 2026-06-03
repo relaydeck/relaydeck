@@ -1793,8 +1793,9 @@ export default class GithubPanel {
   // ── Live updates ──────────────────────────────────────────────
 
   _subscribeLive() {
-    if (!this.api || typeof this.api.onEvent !== 'function') return;
-    this.unsubEvent = this.api.onEvent(ev => this._onEvent(ev));
+    const bus = this.api && this.api.events;
+    if (!bus || typeof bus.subscribe !== 'function') return;
+    this.unsubEvent = bus.subscribe(ev => this._onEvent(ev));
   }
 
   _onEvent(ev) {

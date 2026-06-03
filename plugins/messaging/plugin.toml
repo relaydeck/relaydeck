@@ -35,10 +35,12 @@ skill_content = { type = "textarea", default = "", description = "Optional overr
 [plugin.ui]
 # The Messages *lens* is core (always present when this plugin is loaded
 # in at least one workspace) — see CORE_LENSES in relaydeck/web/static/app.js.
-# The plugin contributes per-agent tiles instead:
+# The plugin contributes a read-only Inbox tile. Messaging is agent-driven:
+# agents send via their messaging skill (just ask one to message a peer),
+# so there's no operator "Compose" tile. tile_compose.js is kept on disk —
+# re-add a { id = "compose", … } entry here to bring it back.
 tiles = [
   { id = "inbox",   title = "Inbox",   icon = "inbox", module = "tile_inbox.js",   default_state = "tab", description = "Peer-to-peer messages this agent has received." },
-  { id = "compose", title = "Compose", icon = "send",  module = "tile_compose.js", default_state = "tab", description = "Send a message to a peer agent in the workspace." },
 ]
 
 [plugin.skills]

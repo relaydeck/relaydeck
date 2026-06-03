@@ -42,9 +42,8 @@ const CORE_TILES = [
 ];
 
 // Tabs that fit before the "+N ▾" overflow. The 5 core tiles
-// (Terminal/Identity/Context/Events/Config) plus the 2 messaging tiles
-// (Inbox/Compose) fit at 7; the messages-lens copy points operators at the
-// Compose tab so it has to be visible by default.
+// (Terminal/Identity/Context/Events/Config) plus the messaging Inbox tile fit
+// comfortably; messaging is agent-driven (no operator Compose tile).
 const MAX_TABS = 7;
 
 let pluginTiles = [];

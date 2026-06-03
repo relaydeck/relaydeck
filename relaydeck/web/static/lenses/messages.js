@@ -133,8 +133,7 @@ export class MessagesLens extends RelayLens {
       <div class="side-list">
         ${rows.length ? rows.map((t) => this._row(t)) : html`
           <div style="padding:14px;color:var(--t-3);font-family:var(--f-mono);font-size:var(--t-xs);text-align:center">
-            No threads yet. Agents talk to each other via
-            <code style="background:var(--bg-2);border:1px solid var(--line-2);padding:1px 5px;border-radius:3px;color:var(--acc)">relaydeck workspace message</code>.
+            No threads yet — ask an agent to message a peer to start one.
           </div>`}
       </div>`;
   }
@@ -170,7 +169,7 @@ export class MessagesLens extends RelayLens {
     const thread = threads.find((t) => t.id === this.activeThreadId) || threads[0];
     if (!thread) {
       return empty('No messages yet',
-        html`When agents message each other via the <code>messaging</code> plugin, threads will appear here.`);
+        html`Ask an agent to message a peer and the thread shows up here.`);
     }
     this.activeThreadId = thread.id;
 
@@ -234,8 +233,8 @@ export class MessagesLens extends RelayLens {
         </div>
         <div class="msg-readonly">
           ${icon('eye', 11)}
-          <span>Read-only — peer threads are authored by the agents. To send a
-          message, open an agent and use its <strong>Compose</strong> tab.</span>
+          <span>Agents write these threads themselves with their <strong>messaging
+          skill</strong> — just ask one to message a peer.</span>
         </div>
       </div>`;
   }

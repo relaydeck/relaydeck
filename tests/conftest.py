@@ -85,6 +85,28 @@ def _flush_db_pools_after_test():
 
 
 @pytest.fixture(autouse=True)
+def _stop_worker_threads_after_test():
+    """Real plugin-registry tests can start daemon-style workers.
+
+    Keep the global worker registry hermetic just like the DB pools: no worker
+    thread from one test should keep ticking during later tests or survive into
+    interpreter shutdown.
+    """
+    yield
+    try:
+        from relaydeck.workers import get_worker_registry
+        reg = get_worker_registry()
+        for worker in reg.all():
+            try:
+                worker.stop()
+                worker.join(timeout=2.0)
+            finally:
+                reg.unregister(worker.id)
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _disable_models_dev_network():
     """Hard-disable models.dev live fetches for the whole suite so no test
     can hit the network (api.json or logos). Tests that exercise the fetch

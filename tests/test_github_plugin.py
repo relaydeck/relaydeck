@@ -916,6 +916,52 @@ def test_poller_records_poll_error_without_masking_as_empty(
     assert "bad credentials" in (cursor.last_error or "")
 
 
+def test_gh_failure_classifies_status_and_ratelimit():
+    from plugins.github.poller import _gh_failure
+    assert _gh_failure(1, "gh: Not Found (HTTP 404)").status == 404
+    assert _gh_failure(1, "gh: Not Found (HTTP 404)").rate_limited is False
+    rl = _gh_failure(1, "gh: HTTP 403: API rate limit exceeded")
+    assert rl.status == 403 and rl.rate_limited is True
+    tr = _gh_failure(1, "dial tcp: i/o timeout")
+    assert tr.status is None and tr.rate_limited is False
+
+
+def test_poller_backs_off_after_failures_and_resets_on_success(monkeypatch, tmp_path):
+    """A failing poll sets a backoff cooldown so the next tick is SKIPPED
+    (no fetch) — a dead/forbidden repo isn't hammered every interval. A later
+    success clears the backoff."""
+    ws = "demo"
+    cfg = tmp_path / "cfg"
+    p = _poller_with_config(cfg, ws, emit_event=lambda t, d: None)
+
+    calls = {"n": 0}
+    result_box = {"r": PollResult(events=[], error="gh api failed (rc=1): gh: Not Found (HTTP 404)", status=404)}
+
+    def _fetch(*a, **kw):
+        calls["n"] += 1
+        return result_box["r"]
+    monkeypatch.setattr(poller, "fetch_events", _fetch)
+
+    now = {"t": 1000.0}
+    monkeypatch.setattr(poller.time, "monotonic", lambda: now["t"])
+
+    # First tick fails → fetch ran once, backoff armed.
+    p._tick(_SilentWorker())
+    assert calls["n"] == 1
+    assert p._fail_streak == 1 and p._skip_until > now["t"]
+
+    # Next tick still inside the cooldown → SKIPPED (no new fetch).
+    p._tick(_SilentWorker())
+    assert calls["n"] == 1
+
+    # Jump past the cooldown → fetch runs again (now succeeds) → backoff clears.
+    now["t"] = p._skip_until + 1
+    result_box["r"] = PollResult(events=[], error=None)
+    p._tick(_SilentWorker())
+    assert calls["n"] == 2
+    assert p._fail_streak == 0 and p._skip_until == 0.0
+
+
 def test_poller_clears_last_error_on_successful_empty_poll(
     monkeypatch, tmp_path
 ):

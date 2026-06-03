@@ -35,7 +35,9 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -127,10 +129,32 @@ class PollResult:
     missing, gh missing, network error, non-JSON response). The
     worker uses this distinction to set `cursor.last_error`, which
     surfaces in `relaydeck github status`. Without it, broken auth would
-    look identical to a quiet repo."""
+    look identical to a quiet repo.
+
+    `status` is the parsed HTTP code (when the failure was an HTTP error) and
+    `rate_limited` flags a GitHub rate-limit response — the poller uses both
+    to decide how hard to back off (see `_record_failure`)."""
 
     events: list[dict[str, Any]]
     error: str | None = None
+    status: int | None = None
+    rate_limited: bool = False
+
+
+_HTTP_STATUS_RE = re.compile(r"HTTP (\d{3})")
+
+
+def _gh_failure(rc: int, stderr: str) -> PollResult:
+    """Build a classified PollResult from a non-zero `gh` invocation."""
+    s = (stderr or "").strip()
+    m = _HTTP_STATUS_RE.search(s)
+    status = int(m.group(1)) if m else None
+    low = s.lower()
+    rate_limited = "rate limit" in low or status == 429
+    return PollResult(
+        events=[], error=f"gh api failed (rc={rc}): {s[:200]}",
+        status=status, rate_limited=rate_limited,
+    )
 
 
 def fetch_events(
@@ -174,9 +198,10 @@ def fetch_events(
         return PollResult(events=[], error=msg)
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", errors="replace").strip()
-        msg = f"gh api failed (rc={proc.returncode}): {stderr[:200]}"
-        logger.warning("github: %s", msg)
-        return PollResult(events=[], error=msg)
+        # Quiet here — the worker logs a throttled, classified warning + backs
+        # off (a dead/forbidden repo otherwise spams the daemon log per tick).
+        logger.debug("github: gh api failed (rc=%s): %s", proc.returncode, stderr[:200])
+        return _gh_failure(proc.returncode, stderr)
     try:
         out = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
@@ -223,9 +248,8 @@ def fetch_issues_since(
         return PollResult(events=[], error=msg)
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", errors="replace").strip()
-        msg = f"gh api failed (rc={proc.returncode}): {stderr[:200]}"
-        logger.warning("github: %s", msg)
-        return PollResult(events=[], error=msg)
+        logger.debug("github: gh api failed (rc=%s): %s", proc.returncode, stderr[:200])
+        return _gh_failure(proc.returncode, stderr)
     try:
         # strict=False: issue/PR bodies legitimately contain raw control chars.
         out = json.loads(proc.stdout, strict=False)
@@ -352,6 +376,11 @@ class GithubPoller:
         self._worker: Any | None = None
         self._config: RulesConfig | None = None
         self._cursor_path = cursor_path(config_home, workspace)
+        # Backoff state (in-memory; resets on daemon restart). A repo that
+        # 404s / is forbidden / rate-limits us shouldn't be hammered every
+        # interval — we skip ticks for a growing cooldown until it recovers.
+        self._fail_streak = 0
+        self._skip_until = 0.0
 
     # ── lifecycle ───────────────────────────────────────────────────
 
@@ -396,6 +425,11 @@ class GithubPoller:
     # ── worker tick ────────────────────────────────────────────────
 
     def _tick(self, worker: Any) -> None:
+        # Backoff: after repeated failures we skip ticks for a growing cooldown
+        # instead of hammering a dead/forbidden/rate-limited repo every interval.
+        if self._skip_until and time.monotonic() < self._skip_until:
+            return
+
         config = self._safe_load_config()
         self._config = config
         if config is None:
@@ -405,6 +439,41 @@ class GithubPoller:
             self._tick_issues(config, worker)
         else:
             self._tick_events(config, worker)
+
+    def _record_success(self) -> None:
+        """Clear backoff after any successful poll."""
+        self._fail_streak = 0
+        self._skip_until = 0.0
+
+    def _record_failure(self, result: PollResult, worker: Any) -> None:
+        """Classify a failed poll, set a backoff cooldown, and log it (throttled
+        so a persistently-broken repo doesn't spam the worker log every tick)."""
+        self._fail_streak += 1
+        interval = (
+            self._config.poll_interval_s if self._config else self.default_interval_s
+        )
+        n = self._fail_streak
+        if result.rate_limited:
+            # Respect rate limits hard — 5 min, growing to 30 min.
+            delay = min(300.0 * n, 1800.0)
+            kind = "rate-limited"
+        elif result.status in (401, 403, 404, 410):
+            # Won't self-heal without a config/access fix — back off aggressively.
+            delay = min(interval * (2 ** min(n, 6)), 1800.0)
+            kind = f"http {result.status}"
+        else:
+            # Transient (network blip, timeout, 5xx) — quick exponential, 5 min cap.
+            delay = min(interval * (2 ** min(n, 5)), 300.0)
+            kind = "transient"
+        self._skip_until = time.monotonic() + delay
+        # Log on the first failure of a streak (+ every 20th) only.
+        if n == 1 or n % 20 == 0:
+            with contextlib.suppress(Exception):
+                worker.log(
+                    f"poll failed ({kind}, attempt {n}): {result.error} "
+                    f"— backing off ~{int(delay)}s",
+                    level="warn",
+                )
 
     def _tick_issues(self, config: RulesConfig, worker: Any) -> None:
         """Reliable source: poll /issues?since= and diff state into events.
@@ -417,10 +486,10 @@ class GithubPoller:
         cursor = load_cursor(self._cursor_path)
         result = fetch_issues_since(config.repo, cursor.since, gh_binary=self.gh_binary)
         if result.error is not None:
-            with contextlib.suppress(Exception):
-                worker.log(f"poll failed: {result.error}", level="warn")
+            self._record_failure(result, worker)
             self._save_cursor(error=result.error)
             return
+        self._record_success()
 
         issues = result.events  # raw issue/PR objects on this path
 
@@ -453,12 +522,12 @@ class GithubPoller:
     def _tick_events(self, config: RulesConfig, worker: Any) -> None:
         result = fetch_events(config.repo, gh_binary=self.gh_binary)
         if result.error is not None:
-            with contextlib.suppress(Exception):
-                worker.log(f"poll failed: {result.error}", level="warn")
+            self._record_failure(result, worker)
             # Record the error only; last_event_id + seen_ids keep their
             # persisted values (the _KEEP sentinel default).
             self._save_cursor(error=result.error)
             return
+        self._record_success()
 
         cursor = load_cursor(self._cursor_path)
         events = result.events

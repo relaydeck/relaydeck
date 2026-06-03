@@ -55,6 +55,8 @@ export default class TerminalTile {
     this.pingTimer = null;
     this.reconnectTimer = null;
     this.disposed = false;
+    this.reconnectAttempts = 0;
+    this._lastCtrlEvent = null;
     this._dropOverlay = null;
     this._dropHandlers = null;
     this._dropDepth = 0;
@@ -318,6 +320,7 @@ export default class TerminalTile {
 
     this.ws.addEventListener('open', () => {
       this.host.classList.remove('dead');
+      this._lastCtrlEvent = null;
       // Fit to the now-settled pane BEFORE sending the size. On initial
       // page load / launch the socket opens before the flex layout has
       // sized the pane, so xterm is still at its ~80-col default —
@@ -338,13 +341,17 @@ export default class TerminalTile {
       const kind = view[0];
       const payload = view.subarray(1);
       if (kind === FRAME_PTY) {
+        this.reconnectAttempts = 0;
+        this._lastCtrlEvent = null;
         this.term?.write(payload);
       } else if (kind === FRAME_CTRL) {
         let ev = null;
         try { ev = JSON.parse(new TextDecoder().decode(payload)); } catch (_) {}
         if (ev?.event === 'pty_closed') {
+          this._lastCtrlEvent = 'pty_closed';
           this._write('\r\n\x1b[2m[harness exited — waiting for relaunch]\x1b[0m\r\n');
         } else if (ev?.event === 'agent_not_running') {
+          this._lastCtrlEvent = 'agent_not_running';
           this._write('\r\n\x1b[33m[agent is not running — click ▶ Launch in the header]\x1b[0m\r\n');
         }
       }
@@ -358,8 +365,18 @@ export default class TerminalTile {
       // (pi especially). Stay open so the operator doesn't have to
       // re-click the tab.
       if (this.disposed) return;
+      this.reconnectAttempts += 1;
+      if (this._lastCtrlEvent === 'agent_not_running' && this.reconnectAttempts > 3) {
+        this._write('\r\n\x1b[2m[terminal reconnect paused until the agent starts]\x1b[0m\r\n');
+        return;
+      }
+      if (this._lastCtrlEvent === 'pty_closed' && this.reconnectAttempts > 20) {
+        this._write('\r\n\x1b[2m[terminal reconnect paused after 20 attempts]\x1b[0m\r\n');
+        return;
+      }
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = setTimeout(() => this._connect(), 800);
+      const delay = Math.min(5000, Math.round(800 * Math.pow(1.35, this.reconnectAttempts - 1)));
+      this.reconnectTimer = setTimeout(() => this._connect(), delay);
     });
 
     this.ws.addEventListener('error', () => {

@@ -582,29 +582,82 @@ def test_cursor_missing_returns_empty(tmp_path):
     assert load_cursor(tmp_path / "missing.json").last_event_id is None
 
 
-def test_poller_select_new_compares_numeric_event_ids(tmp_path):
-    p = GithubPoller(
-        workspace="demo",
-        config_home=tmp_path,
-        workspace_path=None,
-        bus=None,
-        send_message=None,
-        emit_event=None,
+def _poller_with_config(cfg_home, ws, *, repo="relaydeck/relaydeck", emit_event=None):
+    """A poller wired to a single bug→bus.emit rule, for dedup tests."""
+    (cfg_home / "workspaces" / ws / "runtime" / "github").mkdir(parents=True, exist_ok=True)
+    (cfg_home / "workspaces" / ws / "github.yaml").write_text(
+        f"""
+repo: {repo}
+rules:
+  - name: bug
+    when: {{ event: IssuesEvent, label: bug }}
+    do:
+      - bus.emit: {{ type: bug-seen, data: {{}} }}
+"""
     )
-    events = [{"id": "10000"}, {"id": "9998"}]
-    assert p._select_new(events, "9999") == [{"id": "10000"}]
+    return GithubPoller(
+        workspace=ws, config_home=cfg_home, workspace_path=cfg_home,
+        bus=None, send_message=None, emit_event=emit_event,
+        gh_binary="gh", default_interval_s=30.0,
+    )
 
 
-def test_poller_latest_event_id_uses_numeric_order(tmp_path):
-    p = GithubPoller(
-        workspace="demo",
-        config_home=tmp_path,
-        workspace_path=None,
-        bus=None,
-        send_message=None,
-        emit_event=None,
+class _SilentWorker:
+    def log(self, *a, **kw):
+        pass
+
+
+def test_poller_fires_event_with_lower_id_than_seen(monkeypatch, tmp_path, issue_labeled_event):
+    """Regression: GitHub event ids are NOT monotonic with time — a later
+    event can carry a LOWER id than an earlier one. A max-id watermark would
+    permanently swallow it; the seen-id set must still fire it."""
+    ws = "demo"
+    cfg = tmp_path / "cfg"
+    emitted = []
+    p = _poller_with_config(cfg, ws, emit_event=lambda t, d: emitted.append((t, d)))
+    # Cursor already saw a HIGH id; the new event's id (9001) is lower.
+    save_cursor(cursor_path(cfg, ws), Cursor(last_event_id="12592490834", seen_ids=["12592490834"]))
+    monkeypatch.setattr(
+        poller, "fetch_events",
+        lambda *a, **kw: PollResult(events=[issue_labeled_event], error=None),
     )
-    assert p._latest_event_id([{"id": "9999"}, {"id": "10000"}]) == "10000"
+    p._tick(_SilentWorker())
+    assert "bug-seen" in [t for t, _ in emitted]
+    # The lower id is now remembered.
+    assert "9001" in load_cursor(cursor_path(cfg, ws)).seen_ids
+
+
+def test_poller_does_not_refire_already_seen_event(monkeypatch, tmp_path, issue_labeled_event):
+    """An event already in the seen-set must not fire again on the next poll."""
+    ws = "demo"
+    cfg = tmp_path / "cfg"
+    emitted = []
+    p = _poller_with_config(cfg, ws, emit_event=lambda t, d: emitted.append((t, d)))
+    save_cursor(cursor_path(cfg, ws), Cursor(last_event_id="9001", seen_ids=["9001"]))
+    monkeypatch.setattr(
+        poller, "fetch_events",
+        lambda *a, **kw: PollResult(events=[issue_labeled_event], error=None),
+    )
+    p._tick(_SilentWorker())
+    assert "bug-seen" not in [t for t, _ in emitted]
+
+
+def test_poller_legacy_cursor_migrates_without_firing(monkeypatch, tmp_path, issue_labeled_event):
+    """An old cursor (last_event_id but no seen_ids) is migrated: the current
+    feed is seeded into the seen-set and NO rules fire — we neither trust the
+    stale watermark nor replay history."""
+    ws = "demo"
+    cfg = tmp_path / "cfg"
+    emitted = []
+    p = _poller_with_config(cfg, ws, emit_event=lambda t, d: emitted.append((t, d)))
+    save_cursor(cursor_path(cfg, ws), Cursor(last_event_id="9000"))  # no seen_ids
+    monkeypatch.setattr(
+        poller, "fetch_events",
+        lambda *a, **kw: PollResult(events=[issue_labeled_event], error=None),
+    )
+    p._tick(_SilentWorker())
+    assert "bug-seen" not in [t for t, _ in emitted]
+    assert "9001" in load_cursor(cursor_path(cfg, ws)).seen_ids
 
 
 # ── Poller: dedup + restart ───────────────────────────────────────
@@ -680,7 +733,8 @@ rules:
       - bus.emit: { type: bug-seen, data: { issue_id: "{{ issue.number }}" } }
 """
     )
-    save_cursor(cursor_path(cfg_home, ws), Cursor(last_event_id="9000"))
+    # An established cursor (seen-set present, not containing the new event).
+    save_cursor(cursor_path(cfg_home, ws), Cursor(last_event_id="9000", seen_ids=["9000"]))
 
     monkeypatch.setattr(
         poller, "fetch_events",
@@ -709,8 +763,10 @@ rules:
     assert "bug-seen" in types
     bug_seen = next(d for t, d in emitted if t == "bug-seen")
     assert bug_seen["issue_id"] == "42"
-    # cursor advanced
-    assert load_cursor(cursor_path(cfg_home, ws)).last_event_id == "9001"
+    # cursor advanced + the new id is now remembered
+    cur = load_cursor(cursor_path(cfg_home, ws))
+    assert cur.last_event_id == "9001"
+    assert "9001" in cur.seen_ids
 
 
 def test_poller_records_poll_error_without_masking_as_empty(

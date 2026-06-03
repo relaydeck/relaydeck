@@ -738,6 +738,58 @@ def test_issues_source_records_poll_error(monkeypatch, tmp_path):
     assert load_cursor(cursor_path(cfg, ws)).last_error == "gh boom"
 
 
+def test_issues_bootstrap_seeds_open_only_and_prunes(monkeypatch, tmp_path):
+    """Bootstrap fetches state=open (not all), fires nothing, seeds state; the
+    persisted state is capped to bound cursor.json growth."""
+    ws = "demo"
+    cfg = tmp_path / "cfg"
+    emitted = []
+    p = _issues_poller(cfg, ws, emit_event=lambda t, d: emitted.append((t, d)))
+
+    seen_state = {}
+
+    def _fetch(repo, since, *, state="all", **kw):
+        seen_state["state"] = state
+        # Return more issues than the cap to exercise pruning.
+        return PollResult(events=[_issue(i, updated=f"2026-06-03T00:{i:02d}:00Z")
+                                  for i in range(1, 60)], error=None)
+    monkeypatch.setattr(poller, "fetch_issues_since", _fetch)
+    monkeypatch.setattr(poller, "_MAX_TRACKED_ISSUES", 10)
+
+    p._tick(_SilentWorker())
+    assert seen_state["state"] == "open"          # bootstrap fetched open issues
+    assert emitted == []                          # bootstrap fires nothing
+    cur = load_cursor(cursor_path(cfg, ws))
+    assert len(cur.issues) == 10                  # pruned to the cap
+    # Kept the most-recently-updated (#59 …), dropped the oldest (#1).
+    assert "59" in cur.issues and "1" not in cur.issues
+
+
+def test_fetch_issues_since_paginates_and_flattens(monkeypatch):
+    calls = []
+
+    class _Proc:
+        returncode = 0
+        stdout = json.dumps([[_issue(1)], [_issue(2, pr=True)]]).encode()
+        stderr = b""
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return _Proc()
+
+    monkeypatch.setattr(poller.subprocess, "run", fake_run)
+
+    res = poller.fetch_issues_since("owner/repo", "2026-06-03T00:00:00Z")
+
+    assert [i["number"] for i in res.events] == [1, 2]
+    args, kwargs = calls[0]
+    assert "--paginate" in args
+    assert "--slurp" in args
+    assert "-F" in args
+    assert "since=2026-06-03T00:00:00Z" in args
+    assert kwargs["check"] is False
+
+
 def test_effective_source_auto():
     from plugins.github.rules import Rule, RulesConfig
     issue_rule = Rule(name="r", when={"event": "IssuesEvent"}, do=[])

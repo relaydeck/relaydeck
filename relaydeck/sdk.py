@@ -133,6 +133,19 @@ class WorkerHandle:
     id: str
     name: str
 
+    def stop(self) -> None:
+        """Stop the underlying supervised worker. Idempotent.
+
+        `host.workers.spawn()` hands back this lightweight handle, and the
+        natural way to stop a worker is `handle.stop()` — without this method
+        that call raised AttributeError, which plugins swallowed in a broad
+        `except`, silently leaking the worker (it kept ticking forever). Look
+        the worker up by id and stop it, the same as `host.workers.stop()`."""
+        from relaydeck.workers import get_worker_registry
+        worker = get_worker_registry().get(self.id)
+        if worker is not None:
+            worker.stop()
+
 
 class _CapabilityGate:
     def __init__(self, declared: Iterable[str]) -> None:

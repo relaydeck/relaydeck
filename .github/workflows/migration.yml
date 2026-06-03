@@ -1,0 +1,54 @@
+name: migration
+
+# Real OLD→NEW in-place upgrade test. Installs the previous published release,
+# seeds a realistic state (workspace + a couple of agents, run on a live
+# OpenRouter free model when the secret is present), then installs THIS
+# checkout over the same config home and asserts the schema migrated and no
+# data was lost. Covers BOTH install paths via the matrix:
+#   - pip:        isolated `uv pip install relaydeck==<prev>` → `uv pip install .`
+#   - install_sh: the website `scripts/install.sh` with RELAYDECK_SOURCE pinned
+#     to the previous version, then to this checkout (global uv-tool upgrade).
+#
+# Runs in the pi container (tests/docker/Dockerfile.pi) so a real `pi` harness
+# is available for the live agent run. No mocks: real installs, real daemons,
+# real SQLite migration.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upgrade:
+    name: migration / ${{ matrix.method }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Same gate as e2e: runs on the canonical repo (has the OpenRouter secret),
+    # skips on forks. The live agent run is itself secret-gated inside the
+    # script, so the migration assertions still run without the key.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.repository_owner == 'relaydeck' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        method: [pip, install_sh]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build relaydeck-test:base
+        run: docker build -f tests/docker/Dockerfile.base -t relaydeck-test:base .
+
+      - name: Build relaydeck-test:pi
+        run: docker build -f tests/docker/Dockerfile.pi -t relaydeck-test:pi .
+
+      - name: Upgrade migration (method=${{ matrix.method }})
+        run: |
+          docker run --rm \
+            -e RD_METHOD=${{ matrix.method }} \
+            -e OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}" \
+            -e RELAYDECK_MIG_MODEL="${{ vars.RELAYDECK_E2E_MODEL || 'openai/gpt-4o-mini' }}" \
+            relaydeck-test:pi \
+            bash /src/tests/migration/migration_test.sh

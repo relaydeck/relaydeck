@@ -136,6 +136,16 @@ def test_cli_auth_token_prints_token(tmp_path, monkeypatch):
     assert result2.output.strip() == printed
 
 
+def test_auth_commands_skip_plugin_bootstrap():
+    from relaydeck import _skip_plugin_cli_bootstrap
+
+    assert _skip_plugin_cli_bootstrap(["auth", "token"])
+    assert _skip_plugin_cli_bootstrap(["auth", "show"])
+    assert _skip_plugin_cli_bootstrap(["--verbose", "auth", "token"])
+    assert not _skip_plugin_cli_bootstrap(["github", "status"])
+    assert not _skip_plugin_cli_bootstrap(["workspace", "list"])
+
+
 def test_cli_auth_token_reflects_rotation(tmp_path, monkeypatch):
     """After `relaydeck auth rotate`, `relaydeck auth token` should print the
     new value, not the old one. Belt-and-suspenders against caching

@@ -2973,11 +2973,52 @@ def workspace_rm(name: str, yes: bool):
     if not yes and not click.confirm(f"Unregister workspace {name}?"):
         return
 
+    # Prefer the daemon: it edits the registry AND emits `workspace.removed`,
+    # so per-workspace workers (file-watcher, github poller, …) are torn down
+    # live. A direct config edit can't do that — the running daemon never hears
+    # about the removal, so those workers leak (kept polling, e.g. a 0.5s
+    # file-watcher) until the next restart. Fall back to a local edit only when
+    # no daemon is running, where there are no workers to leak.
+    ok, msg = _remove_workspace_via_daemon(name)
+    if ok:
+        console.print(f"[green]✓[/] Workspace [bold]{name}[/] unregistered")
+        return
+    if msg != "unreachable":
+        console.print(f"[red]✗[/] daemon refused to remove [bold]{name}[/]: {msg}")
+        raise SystemExit(1)
+
+    # No daemon — edit the registry directly.
     data["workspace"] = [w for w in workspaces if w.get("name") != name]
     config_path.write_text(tomli_w.dumps(data))
     if get_current_workspace() == name:
         set_current_workspace("")
     console.print(f"[green]✓[/] Workspace [bold]{name}[/] unregistered")
+
+
+def _remove_workspace_via_daemon(name: str) -> tuple[bool, str]:
+    """DELETE /api/workspaces/{name} on the running daemon. The daemon removes
+    it from the registry AND emits `workspace.removed` so subscribers
+    (file-watcher, github poller, messaging) tear down their per-workspace
+    workers live — otherwise those workers leak until the next restart.
+
+    Returns (ok, message). message == 'unreachable' means no daemon is running,
+    so the caller should fall back to a direct config edit."""
+    import urllib.error
+    import urllib.request
+
+    from relaydeck.state import get_daemon_url
+
+    url = get_daemon_url().rstrip("/") + f"/api/workspaces/{name}"
+    req = urllib.request.Request(url, headers=_daemon_auth_headers(), method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=5, context=_daemon_ssl_context()) as r:
+            r.read(0)
+        return True, "ok"
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        return False, f"HTTP {exc.code}: {body}"
+    except (urllib.error.URLError, OSError):
+        return False, "unreachable"
 
 
 def _patch_workspace_plugins_via_daemon(name: str, plugins: list[str]) -> tuple[bool, str]:

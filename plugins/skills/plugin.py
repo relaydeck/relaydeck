@@ -77,8 +77,17 @@ class SkillsPlugin(Plugin):
 
     def on_unload(self) -> None:
         # Intentionally leave materialized skills in place — see module
-        # docstring. The framework stops our rescan worker on disable.
-        pass
+        # docstring. Stop only our periodic inventory worker.
+        worker = getattr(self, "_worker", None)
+        if worker is not None:
+            with suppress(Exception):
+                worker.stop()
+            with suppress(Exception):
+                from relaydeck.workers import get_worker_registry
+                live_worker = get_worker_registry().get(worker.id)
+                if live_worker is not None:
+                    live_worker.join(timeout=2.0)
+        self._worker = None
 
     # ── settings ──────────────────────────────────────────────────
 

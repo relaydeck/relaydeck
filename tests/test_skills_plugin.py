@@ -434,6 +434,46 @@ def test_register_deploy_and_remove_catalog_skill(tmp_path):
     assert skills_cache.get_skill_link(db, manager.CATALOG_WORKSPACE, "shared") is None
 
 
+def test_link_skill_rolls_back_filesystem_when_db_insert_fails(tmp_path, monkeypatch):
+    config_home = tmp_path / ".relaydeck"
+    db = _db(tmp_path)
+    _register_ws(config_home, "proj", plugins=[])
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "SKILL.md").write_text("---\nname: bad\ndescription: d\n---\nbody")
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(skills_cache, "create_skill_link", boom)
+
+    with pytest.raises(RuntimeError, match="db failed"):
+        manager.link_skill(config_home, db, "proj", str(target), "bad", mode="copy")
+
+    assert not (config_home / "workspaces" / "proj" / "skills" / "bad").exists()
+
+
+def test_register_catalog_skill_rolls_back_symlink_when_db_insert_fails(
+    tmp_path, monkeypatch,
+):
+    config_home = tmp_path / ".relaydeck"
+    db = _db(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "SKILL.md").write_text("---\nname: bad\ndescription: d\n---\nbody")
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(skills_cache, "create_skill_link", boom)
+
+    with pytest.raises(RuntimeError, match="db failed"):
+        manager.register_catalog_skill(config_home, db, str(target), "bad")
+
+    catalog_link = config_home / "plugin-data" / "skills" / "catalog" / "bad"
+    assert not catalog_link.exists() and not catalog_link.is_symlink()
+
+
 def test_link_copy_mode(tmp_path):
     config_home = tmp_path / ".relaydeck"
     db = _db(tmp_path)
@@ -664,6 +704,7 @@ def test_on_load_registers_cli_api_and_worker(tmp_path, monkeypatch):
         assert "/rescan" in route_paths
     finally:
         plugin.on_unload()
+        assert plugin._worker is None
         host.workers.teardown()
 
 

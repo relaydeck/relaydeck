@@ -49,6 +49,7 @@ def test_update_starts_helper_with_reinstall_and_operator_home(tmp_path, monkeyp
     )
     monkeypatch.setattr("relaydeck.transports.api.subprocess.Popen", fake_popen)
     monkeypatch.setattr("relaydeck.transports.api.os.open", lambda *a, **k: 3)
+    monkeypatch.setattr("relaydeck.transports.api.os.close", lambda *a, **k: None)
 
     from relaydeck.transports import api as api_mod
 
@@ -77,6 +78,7 @@ def test_update_default_cmd_is_reinstall(tmp_path, monkeypatch):
 
     monkeypatch.setattr("relaydeck.transports.api.subprocess.Popen", fake_popen)
     monkeypatch.setattr("relaydeck.transports.api.os.open", lambda *a, **k: 3)
+    monkeypatch.setattr("relaydeck.transports.api.os.close", lambda *a, **k: None)
 
     res = client.post("/api/update")
     assert res.status_code == 200

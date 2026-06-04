@@ -43,16 +43,17 @@ PLUGIN_NAME = "manager"
 _DEFAULTS: dict[str, Any] = {
     "on_context_critical": "recommend",
     "on_usage_exceeded": "recommend",
+    "on_message_failed": "recommend",
 }
 
-# Which policy setting governs each trigger. Both triggers ride the PLUGIN bus
-# (context-watch + usage-limits emit there); the manager subscribes there too,
-# so the wiring stays on one bus. (agent.message_failed lives on the
-# orchestrator SSE bus instead — folding it in needs a cross-bus bridge and is
-# a tracked follow-up in ARCHITECTURE-NEXT, not a half-wired trigger here.)
+# Which policy setting governs each trigger. All three ride the PLUGIN bus
+# (context-watch, usage-limits, and core messaging emit there); the manager
+# subscribes there too, so the wiring stays on one bus and each decision also
+# bridges to the SSE feed.
 _TRIGGERS = {
     "agent.context": "on_context_critical",
     "usage_limits.exceeded": "on_usage_exceeded",
+    "agent.message_failed": "on_message_failed",
 }
 
 
@@ -78,6 +79,8 @@ def _advice(trigger: str, action: str) -> str:
         return "context critical — compact or start a fresh session"
     if trigger == "usage_limits.exceeded":
         return "usage cap hit — pause, slow down, or switch to a cheaper model"
+    if trigger == "agent.message_failed":
+        return "message never delivered — check the agent is running, then resend"
     return "review"
 
 
@@ -190,7 +193,8 @@ class ManagerPlugin(Plugin):
         p = self._policy()
         lines = [
             f"context-critical: {p['on_context_critical']}    "
-            f"usage-exceeded: {p['on_usage_exceeded']}",
+            f"usage-exceeded: {p['on_usage_exceeded']}    "
+            f"message-failed: {p['on_message_failed']}",
             "",
             "recent actions (newest last):",
         ]
@@ -237,7 +241,8 @@ class ManagerPlugin(Plugin):
             console.print(
                 "policy: "
                 f"context-critical=[bold]{data.get('on_context_critical')}[/]  "
-                f"usage-exceeded=[bold]{data.get('on_usage_exceeded')}[/]"
+                f"usage-exceeded=[bold]{data.get('on_usage_exceeded')}[/]  "
+                f"message-failed=[bold]{data.get('on_message_failed')}[/]"
             )
             ok2, adata = _call_daemon("/api/plugins/manager/actions", method="GET")
             actions = (adata or {}).get("actions") or [] if ok2 else []

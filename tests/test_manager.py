@@ -116,6 +116,24 @@ def test_fresh_session_executes(ctx, monkeypatch):
     orch.reset_agent_session.assert_called_once_with("alice")
 
 
+def test_message_failed_is_recommend(ctx):
+    c, orch, bus = ctx
+    _legacy_on_load(c)
+    seen = _capture(bus, "manager.action")
+    bus.emit(Event(
+        type="agent.message_failed",
+        data={"agent_id": "alice", "message_id": "m1", "workspace": "demo"},
+        source_plugin="orchestrator",
+    ))
+    assert len(seen) == 1
+    assert seen[0].data["trigger"] == "agent.message_failed"
+    assert seen[0].data["action"] == "recommend"
+    assert seen[0].data["executed"] is False
+    # Never auto-acts on a failed message — the agent is usually down.
+    orch.stop_agent.assert_not_called()
+    orch.reset_agent_session.assert_not_called()
+
+
 def test_usage_exceeded_pause_executes(ctx, monkeypatch):
     c, orch, bus = ctx
     import plugins.manager.plugin as mod

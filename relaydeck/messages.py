@@ -275,23 +275,34 @@ def mark_injected(msg_id: str, rendered_body: str,
 
 def _emit_message_failed(msg_id: str, to_id: str, workspace: str,
                          error: str, attempts: int) -> None:
-    """Publish `agent.message_failed` on the live event stream when a message
-    hits the terminal `failed` state. Best-effort: uses the already-running
-    daemon orchestrator if there is one (so it persists + fans out like every
-    other event), and is a no-op otherwise — never construct an orchestrator
-    just to emit, and never let an emit failure break delivery accounting."""
+    """Publish `agent.message_failed` when a message hits the terminal `failed`
+    state. Prefers the PLUGIN bus when the daemon has one wired — so policy
+    plugins (the `manager`) can react, and the existing plugin-bus→SSE bridge
+    (`agent.*`) still carries it to the dashboard / `view` / `events tail -f`.
+    Falls back to the orchestrator SSE bus + events-table persistence when
+    there's no plugin bus (CLI fallback, tests). Best-effort: never construct
+    an orchestrator just to emit, never let an emit failure break delivery
+    accounting. The durable record either way is the `failed` agent_messages
+    row (delivery_state + last_error)."""
     try:
         import relaydeck.orchestrator as _orch_mod
         orch = getattr(_orch_mod, "_orchestrator", None)
         if orch is None:
             return
-        orch.emit_event(to_id or "operator", "agent.message_failed", {
+        payload = {
+            "agent_id": to_id or "operator",
             "message_id": msg_id,
             "to": to_id,
             "workspace": workspace,
             "attempts": attempts,
             "error": (error or "")[:500],
-        })
+        }
+        if getattr(orch, "_plugin_event_bus", None) is not None:
+            # Plugin bus → manager reacts + bridge forwards to SSE (one hop).
+            orch._emit_plugin_event("agent.message_failed", payload)
+        else:
+            # No plugin bus → straight to the SSE bus, and persist for history.
+            orch.emit_event(to_id or "operator", "agent.message_failed", payload)
     except Exception:
         pass
 

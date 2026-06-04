@@ -179,6 +179,45 @@ def test_message_failed_emits_audit_event(tmp_path, monkeypatch):
     assert any(e["type"] == "agent.message_failed" for e in orch.get_events("coder"))
 
 
+def test_message_failed_routes_to_plugin_bus_when_wired(tmp_path, monkeypatch):
+    """When the daemon has a plugin bus, agent.message_failed rides it (so the
+    manager can react) AND the plugin-bus→SSE bridge still carries it to the
+    live feed — one hop, no double delivery."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _app, orch = _make_app(tmp_path)
+
+    import relaydeck.orchestrator as _orch_mod
+    from relaydeck.plugin import PluginEventBus
+    from relaydeck.messages import insert_message, record_delivery_failure
+
+    _orch_mod._orchestrator = orch
+    plugin_bus = PluginEventBus()
+    orch.set_event_bus(plugin_bus)
+
+    on_plugin_bus = []
+    plugin_bus.subscribe("agent.message_failed", lambda e: on_plugin_bus.append(e))
+    on_sse = orch.subscribe_events("*")
+
+    msg_id = insert_message("architect", "coder", "x",
+                            workspace="proj", db_path=orch.db_path)
+    record_delivery_failure(msg_id, "pty closed", db_path=orch.db_path, max_attempts=1)
+
+    sse = []
+    try:
+        while True:
+            sse.append(on_sse.get_nowait())
+    except Exception:
+        pass
+    orch.unsubscribe_events("*", on_sse)
+
+    # Reached the plugin bus (manager's path)…
+    assert len(on_plugin_bus) == 1
+    assert on_plugin_bus[0].data["message_id"] == msg_id
+    # …and bridged to the SSE feed exactly once (no double delivery).
+    failed_sse = [e for e in sse if e["type"] == "agent.message_failed"]
+    assert len(failed_sse) == 1
+
+
 def test_emit_endpoint_rejects_missing_type(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     app, _ = _make_app(tmp_path)

@@ -184,6 +184,12 @@ class Orchestrator:
     # that `relaydeck agent list` doesn't lie for long, loose enough that
     # the read load on SQLite stays negligible.
     SWEEPER_INTERVAL: float = 5.0
+    # Total wall-clock budget for joining ALL agent threads at shutdown.
+    # Every agent's stop_flag + terminate() fire before the join loop, so the
+    # reaps proceed in parallel; we wait against ONE shared deadline rather
+    # than 10s *per agent*, which would serialize to N×10s and overrun the
+    # daemon supervisor's SIGKILL grace (so clean stops got force-killed).
+    SHUTDOWN_JOIN_BUDGET_S: float = 8.0
     # How long start_agent waits for the runner thread to confirm the
     # agent actually came up before returning. If the child fails to
     # Popen (binary missing, perm denied) we want the CLI to know
@@ -440,9 +446,13 @@ class Orchestrator:
                 except Exception:
                     pass
 
-        # Wait for threads with a timeout
+        # Join all threads against ONE shared deadline. They're already
+        # terminating in parallel (flags + terminate() set above), so a slow
+        # agent doesn't push the others past the supervisor's SIGKILL grace.
+        deadline = time.monotonic() + self.SHUTDOWN_JOIN_BUDGET_S
         for agent_id, thread in list(self._running.items()):
-            thread.join(timeout=10.0)
+            remaining = max(0.0, deadline - time.monotonic())
+            thread.join(timeout=remaining)
             if thread.is_alive():
                 logger.warning("Agent %s thread did not stop in time", agent_id)
 

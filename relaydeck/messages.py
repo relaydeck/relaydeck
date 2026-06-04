@@ -273,6 +273,29 @@ def mark_injected(msg_id: str, rendered_body: str,
         pass
 
 
+def _emit_message_failed(msg_id: str, to_id: str, workspace: str,
+                         error: str, attempts: int) -> None:
+    """Publish `agent.message_failed` on the live event stream when a message
+    hits the terminal `failed` state. Best-effort: uses the already-running
+    daemon orchestrator if there is one (so it persists + fans out like every
+    other event), and is a no-op otherwise — never construct an orchestrator
+    just to emit, and never let an emit failure break delivery accounting."""
+    try:
+        import relaydeck.orchestrator as _orch_mod
+        orch = getattr(_orch_mod, "_orchestrator", None)
+        if orch is None:
+            return
+        orch.emit_event(to_id or "operator", "agent.message_failed", {
+            "message_id": msg_id,
+            "to": to_id,
+            "workspace": workspace,
+            "attempts": attempts,
+            "error": (error or "")[:500],
+        })
+    except Exception:
+        pass
+
+
 def record_delivery_failure(msg_id: str, error: str,
                             db_path: str | None = None,
                             max_attempts: int = MAX_DELIVERY_ATTEMPTS) -> str:
@@ -334,12 +357,24 @@ def record_delivery_failure(msg_id: str, error: str,
                 "WHERE id = ? AND delivery_state != ?",
                 (STATE_FAILED, msg_id, STATE_DELIVERED),
             )
+            to_id, workspace = "", ""
+            meta = conn.execute(
+                "SELECT to_id, workspace FROM agent_messages WHERE id = ?",
+                (msg_id,),
+            ).fetchone()
+            if meta is not None:
+                to_id, workspace = str(meta[0] or ""), str(meta[1] or "")
             conn.commit()
             try:
                 from relaydeck.metrics import record_message_state
                 record_message_state(STATE_FAILED)
             except Exception:
                 pass
+            # R4 — make the terminal failure VISIBLE, not a silent drop an
+            # operator must go hunting for with `inbox --failed`. Emit an
+            # ambient audit event on the live stream (dashboard / view /
+            # `events tail -f`) via the daemon's orchestrator if one exists.
+            _emit_message_failed(msg_id, to_id, workspace, error, attempts)
             return STATE_FAILED
         conn.commit()
         try:

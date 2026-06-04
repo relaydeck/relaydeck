@@ -153,10 +153,22 @@ not `skills/`, so the bundle is currently copy-to-install.)
 from plugins later: terminal · messages · events · tasks".
 
 **What:** tabbed content in `#main` — **Terminal / Events / Messages / Tasks**
-(`Ctrl+B 1-4`) + a **CLI console** line (`Ctrl+B C`) that runs `relaydeck`
-subcommands and shows output in the Events feed. Events tab is fed by the SSE
-stream the TUI already consumes (dynamic content is markup-escaped so a
-payload with `[...]` can't corrupt RichLog). Tasks tab = the agent roll-up.
++ **plugin-contributed tabs** (`Ctrl+B 1-9`) + a **CLI console** line
+(`Ctrl+B C`) that runs `relaydeck` subcommands and shows output in the Events
+feed. Events tab is fed by the SSE stream the TUI already consumes (dynamic
+content is markup-escaped so a payload with `[...]` can't corrupt RichLog).
+Tasks tab = the agent roll-up.
+
+**Plugins extend the TUI too (`[plugin.tui]`).** A plugin declares
+`[plugin.tui] tabs = [{ id, title, endpoint }]` + a data endpoint; the daemon
+aggregates them onto `/api/plugins/ui` (symmetric with `[plugin.ui]` for the
+web). `view` discovers them and renders the endpoint's `{lines:[...]}` in one
+shared `#plugin` pane — **no plugin widget code runs in the client** (thin
+HTTP consumer, consistent with the CLI/daemon split). `autopilot` ships the
+example tab (its mode, active rules, and recent auto-answer/hold actions via
+`GET /api/plugins/autopilot/tui`). Manifest plumbing:
+`plugin_manifest.TuiTab` → `cli.py` serve aggregate → `/api/plugins/ui` →
+`view._fetch_plugin_tui_tabs`.
 
 **Terminal-untouchable contract held:**
 - Tabs **toggle visibility only** — `#pty` is never unmounted/remounted; its

@@ -134,6 +134,43 @@ def test_message_failed_is_recommend(ctx):
     orch.reset_agent_session.assert_not_called()
 
 
+def test_context_critical_compact_executes(ctx, monkeypatch):
+    c, orch, bus = ctx
+    orch.compact_agent.return_value = {"ok": True, "reason": "sent", "command": "/compact"}
+    import plugins.manager.plugin as mod
+    monkeypatch.setattr(
+        mod.ManagerPlugin, "_policy",
+        lambda self: {"on_context_critical": "compact",
+                      "on_usage_exceeded": "recommend",
+                      "on_message_failed": "recommend"},
+    )
+    _legacy_on_load(c)
+    seen = _capture(bus, "manager.action")
+    _context_event(bus, state="critical")
+    assert len(seen) == 1
+    assert seen[0].data["action"] == "compact"
+    assert seen[0].data["executed"] is True
+    orch.compact_agent.assert_called_once_with("alice")
+
+
+def test_context_critical_compact_unsupported_degrades(ctx, monkeypatch):
+    c, orch, bus = ctx
+    orch.compact_agent.return_value = {"ok": False, "reason": "unsupported", "command": ""}
+    import plugins.manager.plugin as mod
+    monkeypatch.setattr(
+        mod.ManagerPlugin, "_policy",
+        lambda self: {"on_context_critical": "compact",
+                      "on_usage_exceeded": "recommend",
+                      "on_message_failed": "recommend"},
+    )
+    _legacy_on_load(c)
+    seen = _capture(bus, "manager.action")
+    _context_event(bus, state="critical")
+    assert len(seen) == 1
+    assert seen[0].data["executed"] is False
+    assert "fresh session" in seen[0].data["detail"]
+
+
 def test_usage_exceeded_pause_executes(ctx, monkeypatch):
     c, orch, bus = ctx
     import plugins.manager.plugin as mod

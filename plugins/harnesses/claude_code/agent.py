@@ -57,6 +57,8 @@ def _extract_assistant_text(content) -> str:
 class ClaudeCodeAgent(HarnessAgent):
     CLI = "claude"
     HARNESS_TYPE = "claude-code"
+    # Claude Code's built-in in-place context compaction.
+    COMPACT_COMMAND = "/compact"
 
     # Claude Code's TUI is Ink-based. Ink debounces stdin reads to
     # detect bracketed-paste / fast paste bursts: if a chunk of text

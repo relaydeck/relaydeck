@@ -1,5 +1,5 @@
 ---
-name: relaydeck-orchestrate
+name: relaydeck
 description: >
   Spin up and run a TEAM of CLI coding agents in parallel — orchestrate,
   delegate to, supervise, and coordinate multiple background agents
@@ -216,8 +216,8 @@ relaydeck workspace message 'Audit the repo for your specialty. Reply with findi
 for id in security perf tests; do
   relaydeck agent wait "$id" --status complete-unread --timeout 900 \
     || relaydeck agent screen "$id"     # if it didn't finish, look at why
+  relaydeck agent result get "$id"       # durable hand-back (survives a crash)
 done
-relaydeck workspace inbox --full         # collect the findings
 relaydeck agent rm security perf tests   # clean up
 ```
 

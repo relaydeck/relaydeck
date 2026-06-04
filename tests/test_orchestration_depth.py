@@ -3,7 +3,7 @@ RELAYDECK_ORCHESTRATION_DEPTH spawn marker (relaydeck/harness/base.py
 `_build_env`).
 
 RELAYDECK_AGENT_ID already marks "you are a relaydeck-managed agent"; the
-depth marker adds "how deep". The relaydeck-orchestrate skill reads it to
+depth marker adds "how deep". The relaydeck skill reads it to
 refuse bootstrapping a runaway nested fleet when it finds itself already
 inside one (a relaydeck daemon spawned inside a managed agent → its agents
 are depth 2+).

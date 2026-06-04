@@ -1,21 +1,24 @@
-# relaydeck-orchestrate — a publishable agent skill
+# `relaydeck` — a publishable agent skill
 
-A self-contained **agent skill** that teaches *any* capable CLI agent
-(Claude Code, and any harness that reads `SKILL.md`) to install and drive
-[relaydeck](https://relaydeck.ai) — turning a single agent into the
-**conductor of a fleet**. Drop it into a skill directory and your agent can
-spin up, supervise, coordinate, unblock, and tear down a team of background
-coding agents.
+The **`relaydeck` skill**: a self-contained, portable **agent skill** that
+teaches *any* capable CLI agent (Claude Code, and any harness that reads
+`SKILL.md`) to install and drive [relaydeck](https://relaydeck.ai) — turning a
+single agent into the **conductor of a fleet**. Drop it into a skill directory
+and your agent can spin up, supervise, coordinate, unblock, and tear down a
+team of background coding agents.
 
-This bundle is intentionally portable and stands alone — it is **not** a
-relaydeck-internal skill (those, like `relaydeck-fleet`, are injected into
-agents that already run *inside* relaydeck). This one is for the agent
-*outside*, looking in.
+> Packaging note: this is shipped as the **`relaydeck` skill** (not an
+> "orchestrator plugin") so it can be published as a standalone skill package
+> — including to an npm skill registry — under that name.
+
+This bundle stands alone — it is **not** a relaydeck-internal skill (those,
+like `relaydeck-fleet`, are injected into agents that already run *inside*
+relaydeck). This one is for the agent *outside*, looking in.
 
 ## What's in here
 
 ```
-relaydeck-orchestrate/
+relaydeck/
 ├── SKILL.md                     # the skill itself (frontmatter + body)
 ├── README.md                    # this file (install + publish + positioning)
 ├── scripts/
@@ -31,17 +34,18 @@ relaydeck-orchestrate/
 **Claude Code** — with relaydeck installed, use the built-in installer:
 
 ```sh
-relaydeck skills install-orchestrator
+relaydeck skills install            # → ~/.claude/skills/relaydeck
+relaydeck skills install --target both   # Claude + Codex roots
 ```
 
 Or copy the folder into a skills directory manually:
 
 ```sh
 # Personal (all projects):
-cp -r relaydeck-orchestrate ~/.claude/skills/
+cp -r relaydeck ~/.claude/skills/
 
 # Or project-scoped:
-cp -r relaydeck-orchestrate .claude/skills/
+cp -r relaydeck .claude/skills/
 ```
 
 The agent discovers it by `name` + `description`; when a task smells like
@@ -109,9 +113,11 @@ The flywheel:
 - [ ] Ship a 60-second "zero to fleet" screencast: copy folder → "review
       this repo with three agents" → dashboard lights up.
 - [x] Ship the bundle *inside* the `relaydeck` package plus a
-      `relaydeck skills install-orchestrator` command that copies it into
+      `relaydeck skills install` command that copies it into
       `~/.claude/skills` or `~/.codex/skills` — so an existing relaydeck user
       can arm their local agent with one command.
+- [ ] Publish the `relaydeck` skill as a standalone package (npm skill
+      registry) for harnesses that install skills from npm.
 - [ ] Keep `SKILL.md` lean and the `reference/` deep — agents load the
       former always, the latter on demand.
 

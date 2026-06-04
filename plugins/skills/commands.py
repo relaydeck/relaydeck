@@ -27,8 +27,9 @@ def _sanitize_alias(alias: str) -> str:
     return alias
 
 
-def _bundled_orchestrate_skill_dir() -> Path:
-    """Return the bundled relaydeck-orchestrate skill source.
+def _bundled_relaydeck_skill_dir() -> Path:
+    """Return the bundled `relaydeck` skill source (the publishable skill that
+    teaches an external agent to install + drive relaydeck).
 
     In a built wheel it is force-included under `relaydeck/bundled_skills`.
     In a source checkout it lives at the repository root under `skills/`.
@@ -38,11 +39,11 @@ def _bundled_orchestrate_skill_dir() -> Path:
     packaged = (
         Path(relaydeck.__file__).resolve().parent
         / "bundled_skills"
-        / "relaydeck-orchestrate"
+        / "relaydeck"
     )
     if packaged.is_dir():
         return packaged
-    return Path(__file__).resolve().parents[2] / "skills" / "relaydeck-orchestrate"
+    return Path(__file__).resolve().parents[2] / "skills" / "relaydeck"
 
 
 def register(plugin) -> None:
@@ -163,19 +164,20 @@ def register(plugin) -> None:
         console.print(table)
 
     @host.cli.command(
-        "install-orchestrator",
-        help="Install the bundled relaydeck-orchestrate skill for external agents.",
+        "install",
+        help="Install the bundled `relaydeck` skill (teaches an external agent "
+             "to install + drive relaydeck) into your Claude/Codex skill roots.",
     )
     @click.option("--target", type=click.Choice(["claude", "codex", "both"]),
                   default="claude", show_default=True,
                   help="User skill root to install into.")
     @click.option("--force", is_flag=True,
-                  help="Replace an existing relaydeck-orchestrate install.")
-    def _install_orchestrator(target, force):
-        src = _bundled_orchestrate_skill_dir()
+                  help="Replace an existing relaydeck skill install.")
+    def _install_relaydeck_skill(target, force):
+        src = _bundled_relaydeck_skill_dir()
         ok, errors, _warnings = _skills.validate_skill_dir(src)
         if not ok:
-            console.print(f"[red]✗[/] bundled orchestrator skill is invalid: {errors}")
+            console.print(f"[red]✗[/] bundled relaydeck skill is invalid: {errors}")
             raise SystemExit(1)
 
         targets = []
@@ -185,7 +187,7 @@ def register(plugin) -> None:
             targets.append(("codex", _skills.codex_skills_root()))
 
         for label, root in targets:
-            dest = root / "relaydeck-orchestrate"
+            dest = root / "relaydeck"
             if dest.exists():
                 if not force:
                     console.print(

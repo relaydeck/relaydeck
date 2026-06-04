@@ -186,7 +186,7 @@ class CodexAgent(HarnessAgent):
         if profile:
             cmd.extend(["--profile", str(profile)])
 
-        # Autonomy: a relaydeck-orchestrated codex agent runs unattended, so it
+        # Autonomy: a relaydeck-managed codex agent runs unattended, so it
         # can't answer approval prompts, and it must run `relaydeck` CLI
         # commands that write ~/.relaydeck (outside the workspace). Translate
         # the cross-harness autonomy posture into codex flags — unless the

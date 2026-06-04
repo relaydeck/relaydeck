@@ -1,8 +1,10 @@
-# Architecture — what's next: a reliable orchestration OS
+# Architecture — a reliable orchestration OS (delivered)
 
-**Status:** living design doc. Started 2026-06-04 on
-`feat/orchestration-command-center`.
-**Audience:** whoever picks up the orchestration work next.
+**Status:** ✅ DELIVERED. Started 2026-06-04 on
+`feat/orchestration-command-center`; Phases 0–4 are all shipped, tested, and
+committed. This is now a **record of the delivered architecture** — see
+§5a for the (small, optional) future ideas that remain out of scope.
+**Audience:** whoever maintains or extends the orchestration layer.
 
 This is the architect's view of where relaydeck goes after the command-center
 branch: from "a CLI + skill that *can* spawn a fleet" to **a reliable
@@ -197,30 +199,47 @@ reconstruct the full timeline. No new transport — just disciplined emission.
       `Orchestrator.put_result/get_results` (emits `agent.result`) +
       `POST/GET /api/agents/{id}/result` + `relaydeck agent result put/get`.
       The skill's "collect results" is now a durable guarantee, not scrollback.
-- [ ] Optional transcript persistence (bounded, opt-in) so a crashed agent's
-      last screen is recoverable. *(deferred)*
+- [x] Opt-in transcript persistence (`RELAYDECK_TRANSCRIPT_BYTES`) snapshots a
+      crashed agent's last screen on exit → `agent transcript` / endpoint.
 
-**Phase 3 — context/usage/limit awareness (§4)**
+**Phase 3 — context/usage/limit awareness (§4) (DONE)**
 - [x] `agent.context` fullness event + a Context tab — the `context-watch`
       plugin computes fill (latest prompt tokens vs the model's context window
       from models.dev) off `usage.record` and emits warn/critical/recovery.
-- [x] `manager` policy plugin — `agent.context` (critical) + `usage_limits.exceeded`
-      → auditable `manager.action`; recommend by default, opt-in fresh-session
-      / pause. Composes with usage-limits/autopilot/hitl.
-- [ ] Provider-scoped usage/limit roll-up events (account-wide 5h/weekly across
-      all agents on one key, not just per-agent). *(next)*
-- [ ] `agent compact` (KV-safe in-place where the harness supports it, e.g.
-      claude-code `/compact`; fresh-session+handover fallback) — wire as the
-      manager's `compact` action and the one-tap shortcut behind a
-      context-pressure alert. *(next)*
-- [ ] Bridge `agent.message_failed` (orchestrator SSE bus) onto the plugin bus
-      so the manager can react to undelivered messages too. *(follow-up)*
+- [x] `manager` policy plugin — `agent.context` (critical), `usage_limits.exceeded`,
+      and `agent.message_failed` → auditable `manager.action`; recommend by
+      default, opt-in compact / fresh-session / pause. Composes with
+      usage-limits/autopilot/hitl.
+- [x] Provider-account-wide usage roll-up — `usage_limits.provider_threshold/_exceeded`
+      summed across all agents on a provider/key (the shared 5h/weekly cap).
+- [x] `agent compact` — KV-safe in-place compaction (claude-code `/compact`;
+      harnesses without one report "unsupported"), wired as the manager's
+      `compact` action; `Orchestrator.compact_agent` + endpoint + CLI.
+- [x] `agent.message_failed` routed through the plugin bus so the manager reacts
+      (and it still bridges to SSE).
 
-**Phase 4 — polish the OS feel**
-- [ ] Wire autopilot `held`/`unblocked` + the new context/limit events
-      prominently into the dashboard feed (from the command-center handover).
-- [ ] One-tap escalation from a held prompt or a context-pressure alert into
-      `hitl` / `prompts`.
+**Phase 4 — OS feel (DONE)**
+- [x] autopilot `held`/`unblocked`, `usage_limits.*`, `manager.*`, and
+      `agent.context` all bridged onto the SSE feed — every policy/health
+      decision is live + auditable on the dashboard, `view`, and `events tail`.
+- [x] One-tap escalation — `agent escalate` emits `hitl.escalation` so the
+      configured channels ping a human after a hold or a context-critical alert.
+
+---
+
+## 5a. Status: roadmap delivered
+
+Every phase above is shipped, tested, and committed on
+`feat/orchestration-command-center`. This document is now a record of the
+delivered architecture, not an open work-list.
+
+**Genuinely future / optional** (not blocking, not started — each needs a
+capability that doesn't exist yet, so they're deliberately out of scope):
+- Manager `switch-model` / `gate-spawns` actions — need runtime model-change
+  and spawn-interception hooks.
+- A dedicated, styled "fleet health" card in the web dashboard (the events are
+  already in the feed; this is pure web-UI polish).
+- Carrying a handover summary across a `compact`/fresh-session fallback.
 
 ---
 

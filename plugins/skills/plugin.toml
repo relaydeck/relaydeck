@@ -33,9 +33,14 @@ include_codex = { type = "boolean", default = true, description = "Include ~/.co
 include_claude = { type = "boolean", default = true, description = "Include Claude Code skills (~/.claude/skills + per-workspace .claude/skills) in the read-only inventory." }
 inject_plugin_authoring_skill = { type = "boolean", default = true, description = "Materialize both bundled skills (relaydeck-fleet orientation + relaydeck-plugin-dev) into every workspace. Off → agents lose the fleet quick-reference and the plugin-authoring how-to." }
 
+# These two ship in the consolidated top-level `skills/` folder (the single,
+# shareable home for first-party skills) rather than inside this plugin dir.
+# Paths resolve relative to this plugin dir (`plugin_dir / rel`), and the
+# `skills/relaydeck-*` trees are force-included in the wheel (see pyproject),
+# so the same relative path resolves in both the source tree and an install.
 [plugin.skills]
-relaydeck-fleet = "FLEET_SKILL.md"
-relaydeck-plugin-dev = "PLUGIN_AUTHORING_SKILL.md"
+relaydeck-fleet = "../../skills/relaydeck-fleet/SKILL.md"
+relaydeck-plugin-dev = "../../skills/relaydeck-plugin-dev/SKILL.md"
 
 [plugin.ui]
 # First-class rail lens when loaded — operators get a top-level view of

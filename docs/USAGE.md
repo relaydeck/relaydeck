@@ -108,7 +108,7 @@ You don't call an "inject" command — registering a workspace with `skills`/
 ```sh
 # create writes the spec; start brings it up NOW.
 relaydeck agent create reviewer --type claude-code --workspace api \
-    --purpose "Review diffs for correctness + security" --autonomy auto
+    --purpose "Review diffs for correctness + security" -c autonomy=auto
 relaydeck agent create builder  --type codex-cli   --workspace api \
     --purpose "Implement the approved change"
 relaydeck agent start reviewer builder
@@ -118,10 +118,12 @@ relaydeck agent screen reviewer          # render any agent's screen right now
 relaydeck agent stop|restart|rm reviewer
 ```
 
-Harness `--type`: `claude-code`, `codex-cli`, `cursor-cli`, `opencode-cli`,
-`gemini`, `pi`, `relaydeck` (native). `--autonomy`: `auto` (default) | `bypass`
-| `locked` — a spawned agent has no human at its keyboard, so autonomy lets safe
-work run without prompting.
+Harness `--type` (`-t`): `claude-code`, `codex-cli`, `cursor-cli`,
+`opencode-cli`, `antigravity`, `pi`, `relaydeck` (native) — short aliases work
+too (`claude`, `codex`, `cursor`, `opencode`, `agy`). **Autonomy** is a config
+key, not a flag: `-c autonomy=auto` (default) | `bypass` | `locked` | `manual`
+— a spawned agent has no human at its keyboard, so autonomy lets safe work run
+without prompting.
 
 **Durable results + crash recovery** (results survive an agent crash):
 

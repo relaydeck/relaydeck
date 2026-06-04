@@ -213,3 +213,11 @@ Notes for private plugins:
 - Graduating later is free: a private package is already community-shaped;
   `publish` it to share, or move the dir into the relaydeck repo + open a PR to
   make it core.
+
+---
+
+A plugin can **ship its own skill** (the `--pattern skill` scaffold) that gets
+materialized into workspaces — that's how `messaging`/`telegram` inject their
+skills. For *driving* a fleet rather than extending it, see the **relaydeck**
+skill; for the operator-side view of managing skills + plugins, see that
+skill's `reference/extending.md`.

@@ -2084,6 +2084,26 @@ def create_app(config_home: Path | None = None) -> FastAPI:
         )
         return {"ok": True, "id": rid, "agent_id": agent_id}
 
+    @app.post("/api/agents/{agent_id}/compact")
+    async def compact_agent_api(agent_id: str):
+        """Ask a running agent to compact its context in place (KV-safer than a
+        fresh session). 404 unknown agent; 409 not running; 422 when the
+        harness has no in-place compaction (the caller should fall back to a
+        fresh session). Reuses the sanctioned input path — never the PTY read
+        loop (terminal-untouchable)."""
+        if orch.get_agent(agent_id) is None:
+            raise HTTPException(404, f"Agent {agent_id} not found")
+        result = await asyncio.to_thread(orch.compact_agent, agent_id)
+        reason = result.get("reason")
+        if reason == "not-running":
+            raise HTTPException(409, f"Agent {agent_id} is not running")
+        if reason == "unsupported":
+            raise HTTPException(
+                422, f"Agent {agent_id}'s harness has no in-place compaction; "
+                "start a fresh session instead",
+            )
+        return {"agent_id": agent_id, **result}
+
     @app.get("/api/agents/{agent_id}/result")
     async def get_agent_result(
         agent_id: str,

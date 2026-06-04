@@ -70,6 +70,8 @@ def decide(trigger: str, policy: dict[str, str], *, context_state: str | None = 
 
 
 def _advice(trigger: str, action: str) -> str:
+    if action == "compact":
+        return "compacted context in place (KV-safe)"
     if action == "fresh-session":
         return "reset to a clean session"
     if action == "pause":
@@ -124,7 +126,13 @@ class ManagerPlugin(Plugin):
 
         executed = False
         detail = _advice(trigger, action)
-        if action == "fresh-session":
+        if action == "compact":
+            executed = self._compact(agent_id)
+            if not executed:
+                # Harness can't compact in place — degrade to advice, don't
+                # silently do nothing.
+                detail = "no in-place compaction — start a fresh session"
+        elif action == "fresh-session":
             executed = self._reset_session(agent_id)
         elif action == "pause":
             executed = self._pause(agent_id)
@@ -169,6 +177,17 @@ class ManagerPlugin(Plugin):
             return bool(fn(agent_id))
         except Exception as exc:
             logger.debug("manager: pause failed for %s: %s", agent_id, exc)
+            return False
+
+    def _compact(self, agent_id: str) -> bool:
+        orch = self._orch()
+        fn = getattr(orch, "compact_agent", None)
+        if not callable(fn):
+            return False
+        try:
+            return bool((fn(agent_id) or {}).get("ok"))
+        except Exception as exc:
+            logger.debug("manager: compact failed for %s: %s", agent_id, exc)
             return False
 
     def _agent_workspace(self, agent_id: str) -> str | None:

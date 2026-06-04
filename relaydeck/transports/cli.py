@@ -2699,6 +2699,42 @@ def agent_unblock(agent_id: str, answer: str | None, press_enter: bool,
     raise SystemExit(1)
 
 
+@agent.command("compact")
+@click.argument("agent_id")
+def agent_compact(agent_id: str):
+    """Compact a running agent's context IN PLACE (KV-safer than a reset).
+
+    Asks the harness to summarize-and-trim its conversation without killing
+    the process, so the prompt prefix stays stable and the KV cache mostly
+    survives — the move when an agent's context is filling (see
+    [bold]relaydeck context status[/]) but you don't want to lose its session.
+    If the harness has no in-place compaction, start a fresh session instead
+    (`relaydeck agent restart`), after capturing work with `agent result put`.
+    """
+    outcome, resp = _json_to_daemon("POST", f"/api/agents/{agent_id}/compact", {})
+    if outcome == _POST_OK and isinstance(resp, dict):
+        if resp.get("ok"):
+            console.print(
+                f"[green]✓[/] sent {resp.get('command', 'compact')} to "
+                f"[bold]{agent_id}[/] — context compacting in place."
+            )
+        else:
+            console.print(
+                f"[yellow]·[/] compaction not sent to {agent_id} "
+                f"({resp.get('reason', 'unknown')})."
+            )
+        return
+    if outcome == _POST_DAEMON_ERROR:
+        # 422 (unsupported harness) lands here with a helpful message.
+        console.print(f"[red]✗[/] {resp}")
+        raise SystemExit(1)
+    console.print(
+        f"[red]✗[/] daemon unreachable ({resp}). "
+        "Start it with [bold]relaydeck daemon start[/]."
+    )
+    raise SystemExit(1)
+
+
 # ── Agent results: durable structured hand-back ──────────────────────
 
 

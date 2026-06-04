@@ -920,6 +920,31 @@ class Orchestrator:
         self.start_agent(agent_id, session="fresh")
         return "restart"
 
+    def compact_agent(self, agent_id: str) -> dict[str, Any]:
+        """Ask a running agent to compact its context IN PLACE via the
+        harness's compaction command (KV-safer than a fresh session — the
+        prefix is summarized, not discarded). Returns a status dict:
+          {"ok": bool, "reason": "sent"|"not-running"|"unsupported"|"send-failed",
+           "command": str}.
+        `unsupported` means the harness has no known in-place compaction; the
+        caller should fall back to `agent result` + `reset_agent_session`.
+        Announces `agent.compacted` on success for the audit feed."""
+        with self._lock:
+            inst = self._instances.get(agent_id)
+        if inst is None or not callable(getattr(inst, "compact", None)):
+            return {"ok": False, "reason": "not-running", "command": ""}
+        cmd = getattr(inst, "COMPACT_COMMAND", "") or ""
+        if not cmd:
+            return {"ok": False, "reason": "unsupported", "command": ""}
+        ok = False
+        try:
+            ok = bool(inst.compact())
+        except Exception as exc:
+            logger.debug("compact_agent failed for %s: %s", agent_id, exc)
+        if ok:
+            self.emit_event(agent_id, "agent.compacted", {"command": cmd})
+        return {"ok": ok, "reason": "sent" if ok else "send-failed", "command": cmd}
+
     def restart_agent(self, agent_id: str, *, session: str | None = "resume") -> None:
         """Restart an agent's PTY (stop + start), keeping its conversation by
         default (`session="resume"` ensures the harness's continue flag is

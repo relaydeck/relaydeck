@@ -315,6 +315,13 @@ class HarnessAgent(BaseAgent):
 
     CLI: str = ""
     DEFAULT_ARGS: list[str] = []
+    # Slash command the harness understands to summarize-and-trim its context
+    # IN PLACE (without killing the process — so the prompt prefix stays stable
+    # and the KV cache mostly survives). Empty = no known in-place compaction;
+    # the orchestrator then reports it unsupported and the caller falls back to
+    # `agent result` + a fresh session. Sent via the sanctioned input path
+    # (send_message), never the read loop (terminal-untouchable).
+    COMPACT_COMMAND: str = ""
     CHUNK_SIZE: int = 4096
     BUFFER_BYTES: int = 64 * 1024  # ring buffer for reconnect replay
     REPLAY_PTY_BUFFER: bool = True
@@ -704,6 +711,20 @@ class HarnessAgent(BaseAgent):
         process) overrides this and returns True. Triggered by Telegram's
         `/new` / `/clear` command and the future `relaydeck agent reset`."""
         return False
+
+    def compact(self) -> bool:
+        """Ask the harness to compact its context IN PLACE via COMPACT_COMMAND.
+        Returns True iff a compaction command was sent — False when the harness
+        has no known in-place compaction (COMPACT_COMMAND unset). KV-safer than
+        a fresh session: the conversation prefix is summarized rather than
+        discarded, so the cache mostly survives."""
+        cmd = self.COMPACT_COMMAND
+        if not cmd:
+            return False
+        try:
+            return bool(self.send_message(cmd))
+        except Exception:
+            return False
 
     # ── Plugin event bus ─────────────────────────────────────────
 

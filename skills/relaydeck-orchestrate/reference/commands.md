@@ -36,6 +36,7 @@ the commands an orchestrator actually reaches for. `rdk` is an alias for
 | `relaydeck agent send <id> '<body>'` | Push a message into a worker |
 | `relaydeck agent unblock <id> [--answer T \| --enter \| --key K]` | Answer a stuck prompt |
 | `relaydeck agent compact <id>` | Compact context in place (KV-safe) when it's filling — see `relaydeck context status` |
+| `relaydeck agent escalate <id> [-m msg]` | Hand to a human now (emits a HITL escalation to your channels) |
 | `relaydeck agent result put <id> --summary "…" --body @file` | Worker hands back a **durable** result (survives its crash) |
 | `relaydeck agent result get <id> [--key K] [--all] [--json]` | **Collect results** — the reliable hand-back path |
 | `relaydeck agent transcript <id>` | An exited agent's last screen (crash recovery; opt-in via `RELAYDECK_TRANSCRIPT_BYTES`) |

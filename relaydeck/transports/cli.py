@@ -2735,6 +2735,38 @@ def agent_compact(agent_id: str):
     raise SystemExit(1)
 
 
+@agent.command("escalate")
+@click.argument("agent_id")
+@click.option("--message", "-m", default="", help="What the human needs to know.")
+def agent_escalate(agent_id: str, message: str):
+    """Hand an agent to a HUMAN now (the one-tap follow-up to a hold/alert).
+
+    Emits a HITL escalation so every configured channel (Telegram, web, …)
+    pings a person — the move after [bold]autopilot[/] held a prompt or
+    [bold]context status[/] went critical and you want a human, not a policy.
+    """
+    outcome, resp = _json_to_daemon(
+        "POST", f"/api/agents/{agent_id}/escalate", {"message": message},
+    )
+    if outcome == _POST_OK and isinstance(resp, dict):
+        if resp.get("ok"):
+            console.print(f"[green]✓[/] escalated [bold]{agent_id}[/] to a human.")
+        else:
+            console.print(
+                f"[yellow]·[/] escalation not delivered for {agent_id} "
+                "(no channel plugin listening?)."
+            )
+        return
+    if outcome == _POST_DAEMON_ERROR:
+        console.print(f"[red]✗[/] {resp}")
+        raise SystemExit(1)
+    console.print(
+        f"[red]✗[/] daemon unreachable ({resp}). "
+        "Start it with [bold]relaydeck daemon start[/]."
+    )
+    raise SystemExit(1)
+
+
 @agent.command("transcript")
 @click.argument("agent_id")
 def agent_transcript(agent_id: str):

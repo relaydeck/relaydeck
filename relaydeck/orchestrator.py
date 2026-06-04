@@ -949,6 +949,33 @@ class Orchestrator:
             self.emit_event(agent_id, "agent.compacted", {"command": cmd})
         return {"ok": ok, "reason": "sent" if ok else "send-failed", "command": cmd}
 
+    def escalate_agent(self, agent_id: str, message: str = "") -> bool:
+        """Raise a human escalation for an agent on demand — the one-command
+        version of what hitl emits automatically. Publishes `hitl.escalation`
+        (kind="manual") so every channel plugin (telegram/web/…) delivers it to
+        a human, and it rides the hitl.* SSE bridge to the dashboard feed too.
+        The move after an `autopilot.held` or a context-critical alert when you
+        want a person, not a policy. Returns True if the event was emitted."""
+        rec = self.get_agent(agent_id)
+        workspace = (rec or {}).get("workspace") if isinstance(rec, dict) else None
+        payload = {
+            "agent_id": agent_id,
+            "workspace": workspace,
+            "kind": "manual",
+            "message": message or "manual escalation requested",
+            "stopped": False,
+            "respond_hint": f'relaydeck workspace message "<reply>" --agent {agent_id}',
+        }
+        try:
+            if getattr(self, "_plugin_event_bus", None) is not None:
+                self._emit_plugin_event("hitl.escalation", payload)
+            else:
+                self.emit_event(agent_id, "hitl.escalation", payload)
+            return True
+        except Exception as exc:
+            logger.debug("escalate_agent failed for %s: %s", agent_id, exc)
+            return False
+
     def _transcript_path(self, agent_id: str) -> Path:
         return self.config_home / "runtime" / "transcripts" / f"{agent_id}.txt"
 

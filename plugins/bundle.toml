@@ -20,7 +20,8 @@ plugins = [
   "opencode-harness", "antigravity-harness", "relaydeck-native",
   # Extensions
   "messaging", "skills", "theme", "metering", "telegram",
-  "gateway", "file-watcher", "usage-limits", "hitl", "prompts", "dashboard",
+  "gateway", "file-watcher", "usage-limits", "hitl", "prompts", "autopilot",
+  "dashboard",
   # Provider catalogs
   "openai", "anthropic", "ollama", "openrouter",
 ]

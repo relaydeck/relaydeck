@@ -184,23 +184,21 @@ reconstruct the full timeline. No new transport — just disciplined emission.
       owning workspace, ensure the daemon, open TUI / `--web` / `--no-view`.
       (`cli.py`, `tests/test_open_command.py`)
 
-**Phase 1 — finish the resource fix + close the loudest reliability gaps**
-- [ ] Convert the plugin-bus SSE streams (`state/stream`, `messages/stream`)
-      off `run_in_executor` (§3.1).
-- [ ] **R2 reconnect-safe replay:** standard `?since_id=` on the live streams —
-      on subscribe, replay DB events `> since_id` *then* attach, with no gap
-      (subscribe before the history read, dedupe by id).
-- [ ] **R4:** emit `agent.message_failed` and show it in the command center.
-- [ ] **R5:** scale daemon graceful-shutdown to agent count, or stop agents
-      concurrently, so clean stops aren't SIGKILLed.
+**Phase 1 — finish the resource fix + close the loudest reliability gaps (DONE)**
+- [x] Convert the plugin-bus SSE streams (`state/stream`, `messages/stream`)
+      off `run_in_executor` (§3.1) — `_plugin_bus_sse` bridge.
+- [x] **R2 reconnect-safe replay:** `?since_id=` on `/api/agents/{id}/events` —
+      subscribe before the history read (no gap), dedupe the overlap (no dup).
+- [x] **R4:** `agent.message_failed` emitted when delivery exhausts retries.
+- [x] **R5:** shared-deadline concurrent join at shutdown (no N×serial SIGKILL).
 
-**Phase 2 — result capture (R1)**
-- [ ] A `task_results` table + `agent result put/get` (and a `[relay result=]`
-      marker) so an agent can hand back a structured artifact that survives its
-      own crash; `agent wait` returns it; the skill's "collect results" step
-      becomes a guarantee, not a convention.
+**Phase 2 — result capture (R1) (DONE)**
+- [x] `agent_results` table (migration 19, latest-wins per agent+key) +
+      `Orchestrator.put_result/get_results` (emits `agent.result`) +
+      `POST/GET /api/agents/{id}/result` + `relaydeck agent result put/get`.
+      The skill's "collect results" is now a durable guarantee, not scrollback.
 - [ ] Optional transcript persistence (bounded, opt-in) so a crashed agent's
-      last screen is recoverable.
+      last screen is recoverable. *(deferred)*
 
 **Phase 3 — context/usage/limit awareness (§4)**
 - [ ] `agent.context` fullness event per harness + a Context panel in TUI/web.

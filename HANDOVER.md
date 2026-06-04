@@ -133,9 +133,11 @@ SKILL.md harness):
   teardown; guardrails (never do a worker's task, cap concurrency, clean up).
 - `scripts/relaydeck-bootstrap.sh` — idempotent detect→install→daemon-up;
   **refuses (exit 2) if run inside relaydeck**.
-- `reference/commands.md`, `reference/edge-cases.md` (the detect→prevent→
-  answer→escalate playbook), `reference/recipes.md` (fan-out, pipeline,
-  supervisor, quorum, cross-repo).
+- `reference/commands.md` (full verified cheat-sheet), `reference/permissions.md`
+  (the detect→prevent→answer→escalate playbook + auth), `reference/monitoring.md`
+  (events, context/usage/limits, manager, hooks), `reference/extending.md`
+  (skills + plugins), `reference/recipes.md` (fan-out, pipeline, quorum,
+  migration, cross-repo, monitoring).
 - `README.md` — install + the market/viral plan + GTM checklist.
 
 Validated by relaydeck's own parser: `validate_skill_dir → (True, [], [])`.

@@ -2,18 +2,23 @@
 
 The **`relaydeck` skill**: a self-contained, portable **agent skill** that
 teaches *any* capable CLI agent (Claude Code, and any harness that reads
-`SKILL.md`) to install and drive [relaydeck](https://relaydeck.ai) — turning a
-single agent into the **conductor of a fleet**. Drop it into a skill directory
-and your agent can spin up, supervise, coordinate, unblock, and tear down a
-team of background coding agents.
+`SKILL.md`) to install and drive [relaydeck](https://relaydeck.ai) — a
+general-purpose control plane for a **fleet of CLI agents**. Drop it into a
+skill directory and your agent can register workspaces, spin up, supervise,
+coordinate, unblock, collect from, and tear down a team of background agents.
 
-> Packaging note: this is shipped as the **`relaydeck` skill** (not an
-> "orchestrator plugin") so it can be published as a standalone skill package
-> — including to an npm skill registry — under that name.
+It's **general-purpose**: relaydeck manages the fleet; the *purpose* is the
+user's — parallel implementation, review/audit, research, large migrations,
+cross-repo fan-out, monitoring/ops. Not "coding orchestration only."
 
-This bundle stands alone — it is **not** a relaydeck-internal skill (those,
-like `relaydeck-fleet`, are injected into agents that already run *inside*
-relaydeck). This one is for the agent *outside*, looking in.
+> Packaging note: shipped as the **`relaydeck` skill** (not an "orchestrator
+> plugin") so it can be published as a standalone skill package — including to
+> an npm skill registry — under that name.
+
+This bundle stands alone — it is **not** a relaydeck-internal skill. The
+in-fleet skills (`relaydeck-fleet`, `relaydeck-cli`, …) are injected into
+agents that already run *inside* relaydeck; this one is for the agent
+*outside*, looking in. See `../README.md` for the full catalog of skills.
 
 ## What's in here
 
@@ -24,10 +29,16 @@ relaydeck/
 ├── scripts/
 │   └── relaydeck-bootstrap.sh   # idempotent detect → install → daemon-up
 └── reference/
-    ├── commands.md              # orchestration command cheat-sheet
-    ├── edge-cases.md            # detect/prevent/answer/escalate for stuck prompts
-    └── recipes.md               # fan-out, pipeline, supervisor, quorum, cross-repo
+    ├── commands.md              # full, verified command cheat-sheet
+    ├── permissions.md           # autonomy, autopilot, unblock, escalate, auth
+    ├── monitoring.md            # events, status, context/usage/limits, manager, hooks
+    ├── extending.md             # skills management + plugins (install/configure/author)
+    └── recipes.md               # fan-out, pipeline, quorum, migration, cross-repo, monitoring
 ```
+
+`SKILL.md` stays lean (agents load it always); the `reference/` files go deep
+(loaded on demand). Every command in them is verified against the real CLI to
+keep an agent's tool-call failure rate low.
 
 ## Install (for an end user)
 
@@ -41,85 +52,74 @@ relaydeck skills install --target both   # Claude + Codex roots
 Or copy the folder into a skills directory manually:
 
 ```sh
-# Personal (all projects):
-cp -r relaydeck ~/.claude/skills/
-
-# Or project-scoped:
-cp -r relaydeck .claude/skills/
+cp -r relaydeck ~/.claude/skills/        # personal (all projects)
+cp -r relaydeck .claude/skills/          # or project-scoped
 ```
 
 The agent discovers it by `name` + `description`; when a task smells like
-"run several agents", it reads `SKILL.md` and follows it — installing
-relaydeck on first use via `scripts/relaydeck-bootstrap.sh`.
+"run several agents" or "manage these workspaces/agents", it reads `SKILL.md`
+and follows it — installing relaydeck on first use via
+`scripts/relaydeck-bootstrap.sh`.
 
-**Any other harness** that supports SKILL.md-style skills: place the folder
-in that tool's skills path. The skill only depends on a shell and `relaydeck`
+**Any other harness** that supports SKILL.md-style skills: place the folder in
+that tool's skills path. The skill only depends on a shell and `relaydeck`
 (which it installs itself).
 
 > `SKILL.md` references `$CLAUDE_SKILL_DIR` for the script path. If your
-> harness exposes the skill's directory under a different variable,
-> substitute it (or just run the absolute path to `scripts/relaydeck-bootstrap.sh`).
+> harness exposes the skill's directory under a different variable, substitute
+> it (or run the absolute path to `scripts/relaydeck-bootstrap.sh`).
 
 ## Self-awareness built in (inside vs outside)
 
 The skill's first step checks `RELAYDECK_AGENT_ID`:
 
-- **unset** → external orchestrator: install + bootstrap + drive a fleet.
+- **unset** → external operator: install + bootstrap + drive a fleet.
 - **set** → already a managed agent: do *not* bootstrap a second fleet;
-  coordinate as a peer. `RELAYDECK_ORCHESTRATION_DEPTH` (injected by
-  relaydeck on every spawn) lets a nested agent see how deep it is and
-  refuse to start a runaway fleet-of-fleets.
+  coordinate as a peer (use the `relaydeck-fleet` / `relaydeck-cli` skills).
+  `RELAYDECK_ORCHESTRATION_DEPTH` (injected on every spawn) lets a nested
+  agent see how deep it is and refuse a runaway fleet-of-fleets.
 
 The bootstrap script enforces the same guard and exits early (code 2) if run
 from inside relaydeck. So the skill is safe to publish broadly: it behaves
 correctly whether it lands in a plain terminal or inside a relaydeck worker.
 
-## Why this is the orchestration wedge
+## Why this is the wedge
 
 The CLI-agent world is exploding, but everyone hits the same wall the moment
 one agent isn't enough: **how do I run, see, and coordinate many?** Today
-people hand-roll tmux panes, `&` background jobs, and bespoke scripts —
-fragile, invisible, and impossible to supervise. relaydeck already solved
-the hard parts (per-agent PTYs, cross-harness status, a message bus, a live
-dashboard, prompt auto-answering). This skill is the **zero-to-fleet on-ramp**
-that makes all of it reachable from inside the agent the user already trusts.
+people hand-roll tmux panes, `&` jobs, and bespoke scripts — fragile,
+invisible, unsupervisable. relaydeck already solved the hard parts (per-agent
+PTYs, cross-harness status, a message bus, durable results, a live dashboard,
+prompt auto-answering). This skill is the **zero-to-fleet on-ramp** that makes
+all of it reachable from inside the agent the user already trusts.
 
 The flywheel:
 
 1. **Distribution rides the host.** The skill installs into the agent the
-   user *already* runs (Claude Code, etc.). No new app to adopt — the
-   orchestrator shows up where the user already is.
-2. **One folder, instant capability.** Copy a directory → the agent can now
-   command a fleet. The "wow" is one prompt away ("spin up three reviewers
-   in parallel").
-3. **Harness-agnostic by design.** It orchestrates *any* harness
-   (Claude Code, Codex, Cursor, opencode, Gemini, pi). It doesn't compete
-   with the agent that loaded it — it multiplies it. That neutrality is why
-   it spreads instead of threatening incumbents.
+   user *already* runs. No new app to adopt.
+2. **One folder, instant capability.** Copy a directory → the agent can
+   command a fleet. The "wow" is one prompt away.
+3. **Harness-agnostic by design.** It drives *any* harness (Claude Code,
+   Codex, Cursor, opencode, antigravity, pi, relaydeck-native). It multiplies
+   the agent that loaded it instead of competing with it.
 4. **The dashboard is the share moment.** The first time a human watches
-   three agents work in parallel on one screen, they screenshot it. That's
-   the viral artifact.
-5. **Safe-by-default earns trust.** Inside/outside guards, look-before-you-
-   unblock, conservative auto-answer, escalate-the-rest. Orchestration that
-   doesn't surprise you is orchestration people leave on.
+   several agents work in parallel on one screen, they screenshot it.
+5. **Safe-by-default earns trust.** Inside/outside guards,
+   look-before-you-unblock, conservative auto-answer, escalate-the-rest.
 
 ### Go-to-market checklist (for the maintainers)
 
-- [ ] Publish `relaydeck` to PyPI so `uv tool install relaydeck` works
-      cold (the bootstrap script's happy path).
-- [ ] List this skill in the public skill marketplaces / registries the
-      target harnesses index, with the demo GIF (three agents, one
-      dashboard) as the hero.
-- [ ] Ship a 60-second "zero to fleet" screencast: copy folder → "review
-      this repo with three agents" → dashboard lights up.
+- [ ] Publish `relaydeck` to PyPI so `uv tool install relaydeck` works cold.
+- [ ] List this skill in the public skill marketplaces the target harnesses
+      index, with the demo GIF (several agents, one dashboard) as the hero.
+- [ ] Ship a 60-second "zero to fleet" screencast.
 - [x] Ship the bundle *inside* the `relaydeck` package plus a
-      `relaydeck skills install` command that copies it into
-      `~/.claude/skills` or `~/.codex/skills` — so an existing relaydeck user
-      can arm their local agent with one command.
+      `relaydeck skills install` command that copies it into the user's skill
+      roots.
 - [ ] Publish the `relaydeck` skill as a standalone package (npm skill
       registry) for harnesses that install skills from npm.
-- [ ] Keep `SKILL.md` lean and the `reference/` deep — agents load the
-      former always, the latter on demand.
+- [x] Keep `SKILL.md` lean and the `reference/` deep — and **verified**
+      against the CLI so tool calls don't fail.
 
 ## License
 

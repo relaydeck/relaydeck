@@ -435,6 +435,12 @@ def _build_app(
             border: solid #403a5d;
             padding: 0 1;
         }
+        #plugin {
+            height: 1fr;
+            background: #0e0d17;
+            border: solid #403a5d;
+            padding: 0 1;
+        }
         #console {
             height: 1;
             background: #1a1830;
@@ -485,6 +491,9 @@ def _build_app(
             self._active_tab = "terminal"
             self._console_mode = False
             self._console_buffer = ""
+            # Plugin-contributed TUI tabs (data-driven via /api/plugins/ui →
+            # [{id,title,endpoint,plugin}]); discovered each snapshot.
+            self._plugin_tabs: list[dict[str, Any]] = []
 
         def compose(self):
             yield static_cls(self._render_topbar(), id="topbar")
@@ -507,6 +516,7 @@ def _build_app(
                     yield rich_log_cls(id="events", wrap=True, markup=True,
                                        highlight=False, max_lines=600)
                     yield rich_log_cls(id="tasks", wrap=True, markup=True, highlight=False)
+                    yield rich_log_cls(id="plugin", wrap=True, markup=True, highlight=False)
             yield static_cls("", id="console")
             yield static_cls("", id="status")
 
@@ -564,6 +574,7 @@ def _build_app(
             self._worker_rows = await asyncio.to_thread(self._api_list, "/api/workers")
             self._presets = await asyncio.to_thread(self._api_list, "/api/presets")
             self._plugins = await asyncio.to_thread(self._api_list, "/api/plugins")
+            self._plugin_tabs = await asyncio.to_thread(self._fetch_plugin_tui_tabs)
             if self._focused_workspace is None:
                 if self._initial_workspace:
                     self._focused_workspace = self._initial_workspace
@@ -931,20 +942,28 @@ def _build_app(
 
         # ── Command center: tabs, events feed, tasks, CLI console ─────
 
+        def _tabs(self) -> list[tuple[str, str]]:
+            """Ordered (key, title): the 4 fixed panes, then one per
+            discovered plugin TUI tab (`plugin:<index>`)."""
+            tabs = [("terminal", "Terminal"), ("events", "Events"),
+                    ("messages", "Messages"), ("tasks", "Tasks")]
+            for i, t in enumerate(self._plugin_tabs):
+                tabs.append((f"plugin:{i}", t.get("title") or t.get("id") or f"plugin{i}"))
+            return tabs
+
         def _render_tabbar(self) -> None:
-            labels = [("terminal", "Terminal"), ("events", "Events"),
-                      ("messages", "Messages"), ("tasks", "Tasks")]
+            from rich.markup import escape
             parts = []
-            for i, (key, label) in enumerate(labels, start=1):
+            for i, (key, title) in enumerate(self._tabs(), start=1):
                 style = ("b #11101b on #9f94dd" if key == self._active_tab
                          else "#9f94dd")
-                parts.append(f"[{style}] {i} {label} [/]")
+                parts.append(f"[{style}] {i} {escape(str(title))} [/]")
             agent = next((a for a in self._agents if a.id == self._focused_agent), None)
             focus = (f"  [#56516f]{agent.workspace}/{agent.id}[/]" if agent
                      else "  [#56516f]no agent[/]")
             try:
                 self.query_one("#tabbar", static_cls).update(
-                    "".join(parts) + focus + "   [#56516f]^B 1-4 · ^B C console[/]"
+                    "".join(parts) + focus + "   [#56516f]^B 1-9 · ^B C console[/]"
                 )
             except Exception:
                 pass
@@ -991,32 +1010,89 @@ def _build_app(
                 f"{who}[#9de1ff]{escape(typ)}[/] [dim]{escape(_truncate(ps, 90))}[/]"
             )
 
-        async def _set_tab(self, name: str) -> None:
+        async def _set_tab(self, key: str) -> None:
             """Switch the visible content pane. Display-toggle ONLY — every
             pane (the PTY included) stays mounted, so the terminal is never
-            remounted and its WS/stream keep running underneath."""
-            panes = {"terminal": "#pty", "events": "#events",
-                     "messages": "#msgs", "tasks": "#tasks"}
-            if name not in panes:
+            remounted and its WS/stream keep running underneath. Plugin tabs
+            (`plugin:<i>`) all share the single #plugin pane."""
+            pane_for = {"terminal": "#pty", "events": "#events",
+                        "messages": "#msgs", "tasks": "#tasks"}
+            is_plugin = key.startswith("plugin:")
+            visible = "#plugin" if is_plugin else pane_for.get(key)
+            if visible is None:
                 return
-            self._active_tab = name
-            for tab, sel in panes.items():
+            self._active_tab = key
+            for sel in ("#pty", "#events", "#msgs", "#tasks", "#plugin"):
                 try:
-                    self.query_one(sel).display = (tab == name)
+                    self.query_one(sel).display = (sel == visible)
                 except Exception:
                     pass
             self._render_tabbar()
-            if name == "tasks":
+            if key == "tasks":
                 self._render_tasks()
-            elif name == "messages":
+            elif key == "messages":
                 agent = next((a for a in self._agents if a.id == self._focused_agent), None)
                 if agent is not None:
                     await self._render_messages(agent)
-            elif name == "terminal":
+            elif key == "terminal":
                 # The terminal had size 0 while hidden; after layout settles,
                 # re-forward geometry so the child redraws at the right size —
                 # exactly the path a window resize uses (no remount).
                 self.call_after_refresh(self._reforward_pty_size)
+            elif is_plugin:
+                rest = key.split(":", 1)[1]
+                idx = int(rest) if rest.isdigit() else -1
+                if 0 <= idx < len(self._plugin_tabs):
+                    await self._render_plugin_tab(self._plugin_tabs[idx])
+
+        def _fetch_plugin_tui_tabs(self) -> list[dict[str, Any]]:
+            """Discover plugin-contributed TUI tabs from /api/plugins/ui
+            (the same aggregate the web dashboard reads). Best-effort."""
+            try:
+                out = self._host._request("/api/plugins/ui")
+            except Exception:
+                return []
+            if isinstance(out, dict) and isinstance(out.get("tui"), list):
+                return [dict(t) for t in out["tui"] if isinstance(t, dict)]
+            return []
+
+        def _plugin_tab_data(self, endpoint: str) -> Any:
+            try:
+                return self._host._request(endpoint)
+            except Exception:
+                return None
+
+        async def _render_plugin_tab(self, tab: dict[str, Any]) -> None:
+            """Render a plugin TUI tab by GETting its endpoint. Content is
+            plain text (lines) so arbitrary plugin output can't break markup."""
+            from rich.markup import escape
+            from rich.text import Text
+            log = self.query_one("#plugin", rich_log_cls)
+            log.clear()
+            title = tab.get("title") or tab.get("id") or "plugin"
+            log.write(
+                f"[#7c8fdc]{escape(str(title))}[/] [dim]{escape(str(tab.get('plugin', '')))}[/]"
+            )
+            endpoint = tab.get("endpoint")
+            if not endpoint:
+                log.write("[dim]no endpoint declared[/]")
+                return
+            data = await asyncio.to_thread(self._plugin_tab_data, endpoint)
+            if data is None:
+                log.write("[yellow]· could not load (daemon offline or no route?)[/]")
+                return
+            lines: list[Any] = []
+            if isinstance(data, dict):
+                lines = data.get("lines") or []
+            elif isinstance(data, str):
+                lines = data.splitlines()
+            elif isinstance(data, list):
+                lines = data
+            if not lines:
+                log.write("[dim]no content[/]")
+                return
+            for ln in lines[:500]:
+                log.write(Text(str(ln)))
 
         def _reforward_pty_size(self) -> None:
             if (self._pty_task is None or self._pty_task.done()
@@ -1188,11 +1264,11 @@ def _build_app(
                     self._begin_compose()
                 elif key in ("s", "S"):
                     await self._start_focused_agent()
-                elif key in ("1", "2", "3", "4"):
-                    await self._set_tab(
-                        {"1": "terminal", "2": "events",
-                         "3": "messages", "4": "tasks"}[key]
-                    )
+                elif key in ("1", "2", "3", "4", "5", "6", "7", "8", "9"):
+                    tabs = self._tabs()
+                    idx = int(key) - 1
+                    if 0 <= idx < len(tabs):
+                        await self._set_tab(tabs[idx][0])
                 elif key in ("c", "C"):
                     self._begin_console()
                 elif key in ("?", "f1"):

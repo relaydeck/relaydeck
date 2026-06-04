@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -187,6 +188,9 @@ class AutopilotPlugin(Plugin):
         self.host = host
         # agent_id → {"attempts": int, "last_ts": float, "held": bool}
         self._state: dict[str, dict[str, Any]] = {}
+        # Recent actions, newest-last — surfaced in the `relaydeck view`
+        # Autopilot tab and the dashboard.
+        self._recent: deque[str] = deque(maxlen=20)
         host.events.subscribe("agent.status_changed", self._on_status_changed)
         self._register_cli(host)
         self._register_api(host)
@@ -267,6 +271,9 @@ class AutopilotPlugin(Plugin):
             "attempt": st["attempts"],
             "ts": now,
         })
+        self._recent.append(
+            f"unblocked {agent_id} · {rule.name} → {rule.action} (ok={ok})"
+        )
         logger.info(
             "autopilot: unblocked %s via rule %s (ok=%s, attempt=%d)",
             agent_id, rule.name, ok, st["attempts"],
@@ -290,6 +297,7 @@ class AutopilotPlugin(Plugin):
             "screen_tail": tail,
             "ts": now,
         })
+        self._recent.append(f"HELD {agent_id} · {reason} — left for hitl/human")
         logger.info("autopilot: holding %s (%s) — left for hitl/human", agent_id, reason)
 
     # ── Orchestrator access (in-process, like hitl) ──────────────────
@@ -337,6 +345,29 @@ class AutopilotPlugin(Plugin):
 
     # ── API ──────────────────────────────────────────────────────────
 
+    def _tui_lines(self) -> list[str]:
+        """Plain-text content for the `relaydeck view` Autopilot tab
+        (served at /api/plugins/autopilot/tui). Shows the live posture, which
+        rules are active, and recent auto-answer / hold actions."""
+        s = self._settings()
+        lines = [
+            f"mode: {s['mode']}    auto_accept_terms: {s['auto_accept_terms']}",
+            f"cooldown: {s['cooldown_seconds']:g}s    "
+            f"max_attempts: {s['max_attempts']}    "
+            f"active episodes: {len(self._state)}",
+            "",
+            "rules (active at this mode marked [on]):",
+        ]
+        tiers = _tiers_for(s["mode"], s["auto_accept_terms"])
+        for r in _RULES:
+            mark = "on " if r.tier in tiers else "off"
+            ans = (f"key:{r.action['key']}" if "key" in r.action
+                   else f"{r.action.get('data', '')!r}+Enter")
+            lines.append(f"  [{mark}] {r.name} ({r.tier}) -> {ans}")
+        lines += ["", "recent actions (newest last):"]
+        lines += [f"  {x}" for x in self._recent] or ["  (none yet)"]
+        return lines
+
     def _register_api(self, host: PluginHost) -> None:
         @host.api.route("/status", ["GET"])
         async def status():
@@ -352,6 +383,10 @@ class AutopilotPlugin(Plugin):
                     for r in _RULES
                 ]
             }
+
+        @host.api.route("/tui", ["GET"])
+        async def tui():
+            return {"title": "Autopilot", "lines": self._tui_lines()}
 
     # ── CLI ──────────────────────────────────────────────────────────
 

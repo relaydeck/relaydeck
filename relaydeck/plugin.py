@@ -2023,6 +2023,7 @@ class HostPluginAdapter(RelaydeckPlugin):
             "header_chips": base.get("header_chips", []) + live.get("header_chips", []),
             "agent_tiles": base.get("agent_tiles", []) + live.get("agent_tiles", []),
             "widgets": base.get("widgets", []) + live.get("widgets", []),
+            "tui": base.get("tui", []) + live.get("tui", []),
         }
 
     def get_settings_schema(self) -> list[dict[str, Any]]:
@@ -2066,7 +2067,7 @@ def _api_route_exists(app: FastAPI, path: str, methods: set[str]) -> bool:
 
 def _prefix_ui_ids(plugin: str, manifest: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     out: dict[str, list[dict[str, Any]]] = {}
-    for key in ("tabs", "header_chips", "agent_tiles", "widgets"):
+    for key in ("tabs", "header_chips", "agent_tiles", "widgets", "tui"):
         out[key] = []
         for item in manifest.get(key, []) or []:
             copied = dict(item)

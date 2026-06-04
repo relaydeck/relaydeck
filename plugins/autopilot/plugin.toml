@@ -25,6 +25,13 @@ declared_capabilities = [
   "agents.list",
 ]
 
+# Terminal-TUI tab in `relaydeck view` (mirrors [plugin.ui] for the web).
+# The view client GETs /api/plugins/autopilot/tui for the tab's content.
+[plugin.tui]
+tabs = [
+  { id = "autopilot", title = "Autopilot", endpoint = "tui", order = 50 }
+]
+
 [plugin.settings]
 mode = { type = "enum", default = "benign", options = ["off", "benign", "all-known"], description = "off = never auto-answer (detection-only). benign = only the always-safe prompts (press-enter-to-continue, trust-this-workspace). all-known = also accept harness [Y/n] defaults and defer update prompts." }
 auto_accept_terms = { type = "bool", default = false, description = "In all-known mode, also auto-accept terms/license/EULA prompts. Off by default — accepting an agreement carries legal weight; turn on only when you've vetted what your harnesses prompt for." }

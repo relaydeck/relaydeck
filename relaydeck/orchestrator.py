@@ -14,6 +14,7 @@ never take down the daemon.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import queue
@@ -33,16 +34,40 @@ logger = logging.getLogger(__name__)
 
 # ─── In-memory event bus ─────────────────────────────────────────────
 
+class _AsyncSub:
+    """An asyncio-native event subscriber: an `asyncio.Queue` plus the loop
+    it belongs to, so `publish` (called from any thread) can hand events to
+    it with `loop.call_soon_threadsafe` instead of parking a pool thread on a
+    blocking `queue.Queue.get`. Bounded; on overflow the oldest event is
+    dropped (a stalled SSE client must not grow memory without bound)."""
+
+    __slots__ = ("queue", "loop")
+
+    def __init__(self, loop: "asyncio.AbstractEventLoop", maxsize: int) -> None:
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
+        self.loop = loop
+
+
 class EventBus:
     """Lightweight pub/sub for SSE streaming.
 
     Routes agent events to subscribers within milliseconds, avoiding
     SQLite polling for the live dashboard stream. SQLite is still
     written for durability and history replay.
+
+    Two subscriber flavours share one `publish`:
+      - thread queues (`subscribe`) — legacy/in-process consumers that drain
+        from their own thread;
+      - async queues (`subscribe_async`) — SSE generators on the daemon's
+        single event loop. These are the scalable path: an idle stream costs
+        no thread, so N concurrent viewers no longer exhaust the default
+        ThreadPoolExecutor (which control-plane `asyncio.to_thread` calls,
+        e.g. start/stop agent, also share).
     """
 
     def __init__(self):
         self._subscribers: dict[str, list[queue.Queue]] = defaultdict(list)
+        self._async_subscribers: dict[str, list[_AsyncSub]] = defaultdict(list)
         self._lock = threading.Lock()
 
     def subscribe(self, agent_id: str) -> queue.Queue:
@@ -60,22 +85,56 @@ class EventBus:
             except ValueError:
                 pass
 
+    def subscribe_async(self, agent_id: str, maxsize: int = 2000) -> _AsyncSub:
+        """Register an asyncio subscriber for `agent_id` (or "*"). Must be
+        called from within the running event loop — it captures that loop so
+        cross-thread `publish` can deliver without blocking a pool thread."""
+        sub = _AsyncSub(asyncio.get_running_loop(), maxsize)
+        with self._lock:
+            self._async_subscribers[agent_id].append(sub)
+        return sub
+
+    def unsubscribe_async(self, agent_id: str, sub: _AsyncSub) -> None:
+        with self._lock:
+            try:
+                self._async_subscribers[agent_id].remove(sub)
+            except ValueError:
+                pass
+
+    @staticmethod
+    def _deliver_async(sub: _AsyncSub, event: dict) -> None:
+        """Drop-oldest enqueue, run on the subscriber's own loop thread."""
+        q = sub.queue
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            try:
+                q.get_nowait()
+                q.put_nowait(event)
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                pass
+
     def publish(self, agent_id: str, event_type: str,
                 payload: dict | None, event_id: int) -> None:
         event = {"id": event_id, "type": event_type,
                  "agent_id": agent_id, "payload": payload or {}, "ts": time.time()}
         with self._lock:
-            for q in self._subscribers.get(agent_id, []):
-                try:
-                    q.put_nowait(event)
-                except queue.Full:
-                    pass
-            # Also publish to "*" (broadcast) subscribers
-            for q in self._subscribers.get("*", []):
-                try:
-                    q.put_nowait(event)
-                except queue.Full:
-                    pass
+            thread_qs = list(self._subscribers.get(agent_id, []))
+            thread_qs += list(self._subscribers.get("*", []))
+            async_subs = list(self._async_subscribers.get(agent_id, []))
+            async_subs += list(self._async_subscribers.get("*", []))
+        # Fan out outside the lock so a publish never blocks on a consumer.
+        for q in thread_qs:
+            try:
+                q.put_nowait(event)
+            except queue.Full:
+                pass
+        for sub in async_subs:
+            try:
+                sub.loop.call_soon_threadsafe(self._deliver_async, sub, event)
+            except RuntimeError:
+                # Loop already closed (subscriber went away mid-shutdown).
+                pass
 
 
 # Module-level singleton bus
@@ -1190,6 +1249,16 @@ class Orchestrator:
 
     def unsubscribe_events(self, agent_id: str, q: queue.Queue) -> None:
         _bus.unsubscribe(agent_id, q)
+
+    def subscribe_events_async(self, agent_id: str) -> "_AsyncSub":
+        """Async-native event subscription for SSE generators. Unlike
+        `subscribe_events` (a thread queue drained via a pool thread), this
+        costs no thread while idle — the scalable path for many concurrent
+        dashboard / `view` / `events tail -f` viewers."""
+        return _bus.subscribe_async(agent_id)
+
+    def unsubscribe_events_async(self, agent_id: str, sub: "_AsyncSub") -> None:
+        _bus.unsubscribe_async(agent_id, sub)
 
     def emit_event(
         self, agent_id: str, event_type: str, payload: dict | None = None

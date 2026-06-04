@@ -1979,24 +1979,21 @@ def create_app(config_home: Path | None = None) -> FastAPI:
             return orch.get_events(agent_id, since_id=since)
 
         # SSE streaming
-        q = orch.subscribe_events(agent_id)
+        sub = orch.subscribe_events_async(agent_id)
 
         async def event_generator():
             try:
                 while True:
                     try:
-                        event = await asyncio.get_event_loop().run_in_executor(
-                            None, q.get, True, 1.0
-                        )
-                        if event:
-                            yield f"data: {json.dumps(event)}\n\n"
-                    except queue.Empty:
+                        event = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
+                        yield f"data: {json.dumps(event)}\n\n"
+                    except asyncio.TimeoutError:
                         # Send heartbeat
                         yield ": heartbeat\n\n"
             except asyncio.CancelledError:
                 pass
             finally:
-                orch.unsubscribe_events(agent_id, q)
+                orch.unsubscribe_events_async(agent_id, sub)
 
         return StreamingResponse(
             event_generator(),
@@ -2011,23 +2008,20 @@ def create_app(config_home: Path | None = None) -> FastAPI:
     @app.get("/api/events")
     async def stream_all_events():
         """Broadcast all agent events."""
-        q = orch.subscribe_events("*")
+        sub = orch.subscribe_events_async("*")
 
         async def event_generator():
             try:
                 while True:
                     try:
-                        event = await asyncio.get_event_loop().run_in_executor(
-                            None, q.get, True, 1.0
-                        )
-                        if event:
-                            yield f"data: {json.dumps(event)}\n\n"
-                    except queue.Empty:
+                        event = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
+                        yield f"data: {json.dumps(event)}\n\n"
+                    except asyncio.TimeoutError:
                         yield ": heartbeat\n\n"
             except asyncio.CancelledError:
                 pass
             finally:
-                orch.unsubscribe_events("*", q)
+                orch.unsubscribe_events_async("*", sub)
 
         return StreamingResponse(
             event_generator(),

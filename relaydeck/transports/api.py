@@ -2104,6 +2104,17 @@ def create_app(config_home: Path | None = None) -> FastAPI:
             )
         return {"agent_id": agent_id, **result}
 
+    @app.post("/api/agents/{agent_id}/escalate")
+    async def escalate_agent_api(agent_id: str, body: dict[str, Any] | None = None):
+        """Raise a human escalation for an agent (emits hitl.escalation so the
+        configured channels ping a person). The one-tap follow-up to an
+        autopilot hold or a context-critical alert. 404 unknown agent."""
+        if orch.get_agent(agent_id) is None:
+            raise HTTPException(404, f"Agent {agent_id} not found")
+        message = str((body or {}).get("message") or "")
+        ok = await asyncio.to_thread(orch.escalate_agent, agent_id, message)
+        return {"ok": ok, "agent_id": agent_id}
+
     @app.get("/api/agents/{agent_id}/transcript")
     async def get_agent_transcript(agent_id: str):
         """The persisted last-screen transcript of an exited agent (recovery

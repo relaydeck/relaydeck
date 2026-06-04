@@ -2699,6 +2699,103 @@ def agent_unblock(agent_id: str, answer: str | None, press_enter: bool,
     raise SystemExit(1)
 
 
+# ── Agent results: durable structured hand-back ──────────────────────
+
+
+def _read_body_arg(body: str | None) -> str:
+    """Resolve a --body value: `-` = stdin, `@path` = file contents, else the
+    literal string. Empty/omitted → empty string."""
+    if body is None:
+        return ""
+    if body == "-":
+        return sys.stdin.read()
+    if body.startswith("@"):
+        return Path(body[1:]).expanduser().read_text()
+    return body
+
+
+@agent.group("result")
+def agent_result():
+    """Durable structured results — the reliable "collect results" path.
+
+    An agent hands back a result that SURVIVES its own crash (unlike PTY
+    scrollback or a peer message that may never deliver). Latest-wins per
+    (agent, --key). From inside a managed agent:
+
+    \b
+        relaydeck agent result put "$RELAYDECK_AGENT_ID" \\
+          --summary "reviewed PR #42" --body @review.md
+    """
+
+
+@agent_result.command("put")
+@click.argument("agent_id")
+@click.option("--body", "-b", default=None,
+              help="Result body. `-` reads stdin, `@path` reads a file, "
+                   "else the literal text.")
+@click.option("--key", "-k", default="",
+              help="Sub-key / task id (latest-wins per key).")
+@click.option("--status", default="ok",
+              help="Free-form status: ok | error | partial (default ok).")
+@click.option("--summary", "-m", default="", help="Short human summary.")
+def agent_result_put(agent_id: str, body: str | None, key: str,
+                     status: str, summary: str):
+    """Hand back AGENT_ID's structured result (persisted + announced)."""
+    text = _read_body_arg(body)
+    if not text and not summary:
+        console.print("[red]✗[/] provide --body and/or --summary.")
+        raise SystemExit(2)
+    payload = {"body": text, "key": key, "status": status, "summary": summary}
+    outcome, resp = _json_to_daemon("POST", f"/api/agents/{agent_id}/result", payload)
+    if outcome == _POST_OK and isinstance(resp, dict) and resp.get("ok"):
+        console.print(
+            f"[green]✓[/] result #{resp.get('id')} stored for "
+            f"[bold]{agent_id}[/]" + (f" (key={key})" if key else "")
+        )
+        return
+    if outcome == _POST_DAEMON_ERROR:
+        console.print(f"[red]✗[/] {resp}")
+        raise SystemExit(1)
+    console.print(
+        f"[red]✗[/] daemon unreachable ({resp}). "
+        "Start it with [bold]relaydeck daemon start[/]."
+    )
+    raise SystemExit(1)
+
+
+@agent_result.command("get")
+@click.argument("agent_id")
+@click.option("--key", "-k", default=None, help="Filter to a sub-key / task id.")
+@click.option("--all", "show_all", is_flag=True, default=False,
+              help="Show recent history, not just the latest result.")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Print raw JSON (for scripts / orchestrating agents).")
+def agent_result_get(agent_id: str, key: str | None, show_all: bool, as_json: bool):
+    """Read AGENT_ID's result(s) — the durable hand-back."""
+    path = f"/api/agents/{agent_id}/result?latest={'false' if show_all else 'true'}"
+    if key is not None:
+        path += f"&key={key}"
+    outcome, resp = _get_from_daemon(path)
+    if outcome != _POST_OK or not isinstance(resp, dict):
+        console.print(f"[red]✗[/] {resp}")
+        raise SystemExit(1)
+    rows = resp.get("results") or []
+    if as_json:
+        console.print(json.dumps(rows, indent=2, default=str))
+        return
+    if not rows:
+        console.print(f"[dim]no results for {agent_id}{f' (key={key})' if key else ''}.[/]")
+        return
+    for r in rows:
+        kshow = f" [dim]key={r['key']}[/]" if r.get("key") else ""
+        console.print(
+            f"[#56516f]#{r.get('id')}[/] [cyan]{r.get('status', 'ok')}[/]{kshow}"
+            + (f"  [bold]{r['summary']}[/]" if r.get("summary") else "")
+        )
+        if r.get("body"):
+            console.print(r["body"], highlight=False, markup=False)
+
+
 # ── Events: emit / broadcast / tail ──────────────────────────────────
 
 

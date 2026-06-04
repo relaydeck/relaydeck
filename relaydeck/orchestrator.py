@@ -1298,6 +1298,43 @@ class Orchestrator:
             pass
         return ev_id
 
+    # ── Structured results (durable hand-back) ──────────────────
+
+    def put_result(
+        self, agent_id: str, body: str, *, key: str = "", status: str = "ok",
+        summary: str = "", workspace: str | None = None,
+    ) -> int:
+        """Persist a structured result an agent hands back (latest-wins per
+        (agent_id, key)) and announce it as an `agent.result` event so the
+        dashboard / `view` / `agent wait` see it land. Survives the agent's
+        own crash — the durable answer to "collect results"."""
+        from relaydeck.db import put_result as _put
+        if workspace is None:
+            rec = self.get_agent(agent_id)
+            workspace = (rec or {}).get("workspace") if isinstance(rec, dict) else None
+        conn = open_db(self.db_path)
+        try:
+            rid = _put(conn, agent_id, body, key=key, status=status,
+                       summary=summary, workspace=workspace)
+        finally:
+            conn.close()
+        self.emit_event(agent_id, "agent.result", {
+            "result_id": rid, "key": key, "status": status,
+            "summary": summary, "workspace": workspace,
+        })
+        return rid
+
+    def get_results(
+        self, agent_id: str, *, key: str | None = None,
+        latest: bool = True, limit: int = 50,
+    ) -> list[dict]:
+        from relaydeck.db import get_results as _get
+        conn = open_db(self.db_path)
+        try:
+            return _get(conn, agent_id, key=key, latest=latest, limit=limit)
+        finally:
+            conn.close()
+
     # ── Agent-to-agent messaging ────────────────────────────────
 
     def send_message_to(

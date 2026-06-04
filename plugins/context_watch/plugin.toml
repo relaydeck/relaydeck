@@ -1,0 +1,34 @@
+[plugin]
+name = "context-watch"
+version = "0.1.0"
+description = "Watch each agent's context-window fill (latest prompt tokens vs the model's context limit from models.dev) and emit `agent.context` when it crosses warn/critical — so a manager can compact or start a fresh session BEFORE the harness auto-compacts (which blows the KV cache). Harness-agnostic: feeds off the same `usage.record` events every metered harness emits."
+author = "relaydeck"
+license = "MIT"
+category = "infrastructure"
+host_api_version = 1
+workspace_scoped = false
+
+# Capabilities:
+#   events.subscribe — consume usage.record (per-turn token usage)
+#   events.emit      — agent.context (fullness, on state change)
+#   cli.register     — `relaydeck context status`
+#   api.register     — `/api/plugins/context-watch/{state,tui}`
+#   agents.list      — resolve an agent's workspace for the payload
+declared_capabilities = [
+  "events.subscribe",
+  "events.emit",
+  "cli.register",
+  "api.register",
+  "agents.list",
+]
+
+# Terminal-TUI tab in `relaydeck view` (mirrors [plugin.ui] for the web).
+[plugin.tui]
+tabs = [
+  { id = "context", title = "Context", endpoint = "tui", order = 60 }
+]
+
+[plugin.settings]
+warn_pct = { type = "number", default = 70, description = "Emit agent.context at state=warn when fill crosses this percent of the model's context window." }
+critical_pct = { type = "number", default = 88, description = "Emit agent.context at state=critical here — the manager should compact or start a fresh session soon, before the harness auto-compacts." }
+default_context_window = { type = "number", default = 0, description = "Fallback context-window size (tokens) for models models.dev doesn't catalogue. 0 = skip uncatalogued models (no guessing)." }

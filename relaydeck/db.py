@@ -731,7 +731,7 @@ def db_status(path: str | Path) -> dict[str, Any]:
 # migrations have a real version anchor to gate on. The migrations
 # themselves stay idempotent — `user_version` is an optimization + anchor,
 # not the correctness mechanism.
-_SCHEMA_VERSION = 18
+_SCHEMA_VERSION = 19
 
 
 def _user_version(conn: "sqlite3.Connection | _PooledConnection") -> int:
@@ -1277,6 +1277,29 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if not _is_duplicate_column(exc):
             raise
 
+    # Migration 19: agent_results — a durable place for an agent to hand back
+    # a STRUCTURED result that survives its own crash. Before this, "collect
+    # results" meant scraping the PTY ring (256KB, never persisted) or peer
+    # inbox messages; a crashed agent's output was just gone. A result is
+    # latest-wins per (agent_id, key): an agent can post progress under a key
+    # and overwrite it, and `agent wait`/`agent result get` read the latest.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS agent_results (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id  TEXT NOT NULL,
+            workspace TEXT,
+            key       TEXT NOT NULL DEFAULT '',
+            status    TEXT NOT NULL DEFAULT 'ok',
+            summary   TEXT NOT NULL DEFAULT '',
+            body      TEXT NOT NULL DEFAULT '',
+            ts        REAL NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_results_agent "
+        "ON agent_results(agent_id, key, ts)"
+    )
+
     # Future migrations go here. Each block:
     #   - Checks if the column/table/index exists
     #   - Adds it if missing
@@ -1319,6 +1342,52 @@ def log_event(
     )
     conn.commit()
     return cursor.lastrowid
+
+
+def put_result(
+    conn: "sqlite3.Connection | _PooledConnection",
+    agent_id: str,
+    body: str,
+    *,
+    key: str = "",
+    status: str = "ok",
+    summary: str = "",
+    workspace: str | None = None,
+) -> int:
+    """Persist a structured result an agent hands back, latest-wins per
+    (agent_id, key). Returns the new row id. Survives the agent's own crash —
+    this is the durable artifact `agent wait` / `agent result get` read."""
+    cursor = conn.execute(
+        "INSERT INTO agent_results "
+        "(agent_id, workspace, key, status, summary, body, ts) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (agent_id, workspace, key or "", status or "ok",
+         summary or "", body or "", time.time()),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_results(
+    conn: "sqlite3.Connection | _PooledConnection",
+    agent_id: str,
+    *,
+    key: str | None = None,
+    latest: bool = True,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Read results for an agent, newest-first. With `latest=True` returns at
+    most one row (the most recent, optionally filtered to `key`); otherwise
+    the recent history up to `limit`."""
+    sql = "SELECT id, agent_id, workspace, key, status, summary, body, ts FROM agent_results WHERE agent_id = ?"
+    params: list[Any] = [agent_id]
+    if key is not None:
+        sql += " AND key = ?"
+        params.append(key)
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(1 if latest else limit)
+    rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
 
 
 def upsert_agent(

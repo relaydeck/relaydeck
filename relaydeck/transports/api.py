@@ -2066,6 +2066,38 @@ def create_app(config_home: Path | None = None) -> FastAPI:
         ev_id = orch.emit_event(agent_id, etype, payload)
         return {"ok": True, "id": ev_id, "type": etype, "agent_id": agent_id}
 
+    @app.post("/api/agents/{agent_id}/result")
+    async def put_agent_result(agent_id: str, body: dict[str, Any]):
+        """Persist a structured result this agent hands back (latest-wins per
+        (agent_id, key)). The durable answer to "collect results": it survives
+        the agent's own crash and is read by `agent wait` / `agent result get`.
+        Body: `{"body": "...", "key"?: str, "status"?: str, "summary"?: str}`.
+        """
+        result_body = body.get("body")
+        if result_body is None:
+            raise HTTPException(400, "'body' is required")
+        rid = await asyncio.to_thread(
+            orch.put_result, agent_id, str(result_body),
+            key=str(body.get("key") or ""),
+            status=str(body.get("status") or "ok"),
+            summary=str(body.get("summary") or ""),
+        )
+        return {"ok": True, "id": rid, "agent_id": agent_id}
+
+    @app.get("/api/agents/{agent_id}/result")
+    async def get_agent_result(
+        agent_id: str,
+        key: str | None = Query(None),
+        latest: bool = Query(True),
+        limit: int = Query(50),
+    ):
+        """Read this agent's result(s). `latest=true` (default) returns at most
+        one row; `latest=false` returns recent history up to `limit`."""
+        rows = await asyncio.to_thread(
+            orch.get_results, agent_id, key=key, latest=latest, limit=limit,
+        )
+        return {"agent_id": agent_id, "results": rows}
+
     @app.post("/api/agents/{agent_id}/input")
     async def send_agent_input(agent_id: str, body: dict[str, Any]):
         """Send a line of input (or one named key) to a running agent's PTY.

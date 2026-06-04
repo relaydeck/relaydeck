@@ -243,7 +243,7 @@ class Orchestrator:
                 pass
 
         try:
-            for pat in ("agent.*", "workspace.*", "worktree.*", "skills.changed", "github.*", "external_agent.*", "dashboard.*", "appearance.changed", "themes.changed", "telegram.*", "system.plugin.*", "relaydeck-native.*", "hitl.*", "prompt.*"):
+            for pat in ("agent.*", "workspace.*", "worktree.*", "skills.changed", "github.*", "external_agent.*", "dashboard.*", "appearance.changed", "themes.changed", "telegram.*", "system.plugin.*", "relaydeck-native.*", "hitl.*", "prompt.*", "autopilot.*", "usage_limits.*", "manager.*"):
                 bus.subscribe(pat, _forward)
             self._sse_bridge_installed = True
         except Exception:

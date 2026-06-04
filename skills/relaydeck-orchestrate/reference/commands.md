@@ -35,6 +35,8 @@ the commands an orchestrator actually reaches for. `rdk` is an alias for
 | `relaydeck agent wait <id> --status <s> [--timeout N]` | **Block until done** |
 | `relaydeck agent send <id> '<body>'` | Push a message into a worker |
 | `relaydeck agent unblock <id> [--answer T \| --enter \| --key K]` | Answer a stuck prompt |
+| `relaydeck agent result put <id> --summary "…" --body @file` | Worker hands back a **durable** result (survives its crash) |
+| `relaydeck agent result get <id> [--key K] [--all] [--json]` | **Collect results** — the reliable hand-back path |
 
 Harness `--type`: `claude-code`, `codex-cli`, `cursor-cli`, `opencode-cli`,
 `gemini`, `pi`, `relaydeck`.

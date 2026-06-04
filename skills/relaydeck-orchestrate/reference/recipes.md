@@ -16,12 +16,14 @@ for spec in security:"security audit" perf:"performance audit" \
       --purpose "${spec#*:}" --autonomy auto
 done
 relaydeck agent start security perf a11y
-relaydeck workspace message 'Audit your specialty. Reply with concrete findings + file:line.'
+relaydeck workspace message 'Audit your specialty. When done, hand back your
+findings with: relaydeck agent result put "$RELAYDECK_AGENT_ID" --summary "<one line>" --body @findings.md'
 for id in security perf a11y; do
   relaydeck agent wait "$id" --status complete-unread --timeout 900 \
     || relaydeck agent screen "$id"
+  # Durable hand-back — survives an agent crash, unlike scrollback.
+  relaydeck agent result get "$id"
 done
-relaydeck workspace inbox --full
 relaydeck agent rm security perf a11y
 ```
 

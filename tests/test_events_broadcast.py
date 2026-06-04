@@ -113,6 +113,72 @@ def test_emit_endpoint_defaults_agent_to_operator(tmp_path, monkeypatch):
     assert r.json()["agent_id"] == "operator"
 
 
+def test_agent_events_since_id_returns_only_missed(tmp_path, monkeypatch):
+    """A reconnecting client backfills with ?since_id=N — the endpoint returns
+    exactly the events it missed (id > N), in order. This is the data half of
+    the reconnect-safe contract (the live stream replays the same window
+    before attaching, then dedupes the overlap — see stream_events)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    app, orch = _make_app(tmp_path)
+
+    id1 = orch.emit_event("alice", "step.one", {"n": 1})
+    orch.emit_event("alice", "step.two", {"n": 2})
+    orch.emit_event("alice", "step.three", {"n": 3})
+
+    with TestClient(app) as c:
+        r = c.get(f"/api/agents/alice/events?since_id={id1}")
+    assert r.status_code == 200, r.text
+    events = r.json()
+    # step.one (== since_id) excluded; the two later events, in order.
+    assert [e["type"] for e in events] == ["step.two", "step.three"]
+    assert all(int(e["id"]) > id1 for e in events)
+
+
+def test_message_failed_emits_audit_event(tmp_path, monkeypatch):
+    """R4: a message that exhausts delivery attempts becomes a VISIBLE
+    `agent.message_failed` event on the live stream, not a silent drop an
+    operator has to hunt for. Driven through the real orchestrator singleton
+    so the emit path (persist + `*` fan-out) is exercised end-to-end."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _app, orch = _make_app(tmp_path)
+
+    import relaydeck.orchestrator as _orch_mod
+    from relaydeck.messages import insert_message, record_delivery_failure
+
+    # _make_app already set the singleton, but be explicit: the emit helper
+    # uses module `_orchestrator`.
+    _orch_mod._orchestrator = orch
+
+    msg_id = insert_message(
+        "architect", "coder", "do the thing",
+        workspace="proj", db_path=orch.db_path,
+    )
+
+    q = orch.subscribe_events("*")
+    # max_attempts=1 → the first recorded failure is terminal.
+    state = record_delivery_failure(
+        msg_id, "pty closed", db_path=orch.db_path, max_attempts=1,
+    )
+    assert state == "failed"
+
+    seen = []
+    try:
+        while True:
+            seen.append(q.get_nowait())
+    except Exception:
+        pass
+    orch.unsubscribe_events("*", q)
+
+    failed = [e for e in seen if e["type"] == "agent.message_failed"]
+    assert failed, f"no agent.message_failed event; saw {[e['type'] for e in seen]}"
+    payload = failed[0]["payload"]
+    assert payload["message_id"] == msg_id
+    assert payload["to"] == "coder"
+    assert payload["workspace"] == "proj"
+    # And it persisted for audit/history.
+    assert any(e["type"] == "agent.message_failed" for e in orch.get_events("coder"))
+
+
 def test_emit_endpoint_rejects_missing_type(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     app, _ = _make_app(tmp_path)

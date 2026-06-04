@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import queue
 import re
 import subprocess
 import time
@@ -1971,19 +1970,37 @@ def create_app(config_home: Path | None = None) -> FastAPI:
     # ── Events (SSE) ─────────────────────────────────────────────
 
     @app.get("/api/agents/{agent_id}/events")
-    async def stream_events(agent_id: str, stream: bool = Query(False)):
+    async def stream_events(
+        agent_id: str,
+        stream: bool = Query(False),
+        since_id: int = Query(0),
+    ):
         if not stream:
-            since = 0
-            return orch.get_events(agent_id, since_id=since)
+            return orch.get_events(agent_id, since_id=since_id)
 
-        # SSE streaming
+        # SSE streaming, reconnect-safe. Subscribe to the live bus FIRST,
+        # THEN read history > since_id: any event emitted during the history
+        # read lands in the queue, so there's no gap on reconnect. We dedupe
+        # the overlap by skipping live ids we already replayed.
         sub = orch.subscribe_events_async(agent_id)
+        replay = orch.get_events(agent_id, since_id=since_id) if since_id else []
+        last_replayed = max((int(e.get("id") or 0) for e in replay), default=since_id)
 
         async def event_generator():
             try:
+                for ev in replay:
+                    payload = ev.get("payload")
+                    if isinstance(payload, str):
+                        try:
+                            ev = {**ev, "payload": json.loads(payload)}
+                        except (TypeError, ValueError):
+                            pass
+                    yield f"data: {json.dumps(ev, default=str)}\n\n"
                 while True:
                     try:
                         event = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
+                        if int(event.get("id") or 0) <= last_replayed:
+                            continue  # already sent in the replay window
                         yield f"data: {json.dumps(event)}\n\n"
                     except asyncio.TimeoutError:
                         # Send heartbeat

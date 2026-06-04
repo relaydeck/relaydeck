@@ -462,6 +462,17 @@ class HarnessAgent(BaseAgent):
         self._inject_git_env(env, ws_path)
         if getattr(self, "agent_id", None):
             env["RELAYDECK_AGENT_ID"] = self.agent_id
+        # Orchestration-depth marker. RELAYDECK_AGENT_ID already tells a
+        # spawned agent "you are relaydeck-managed"; this adds "how deep".
+        # In the usual single-daemon topology every managed agent is depth
+        # 1; running a relaydeck daemon *inside* a managed agent (a
+        # fleet-of-fleets) makes its agents depth 2+. The relaydeck-orchestrate
+        # skill reads this to refuse bootstrapping a runaway nested fleet.
+        try:
+            parent_depth = int(os.environ.get("RELAYDECK_ORCHESTRATION_DEPTH", "0"))
+        except ValueError:
+            parent_depth = 0
+        env["RELAYDECK_ORCHESTRATION_DEPTH"] = str(max(0, parent_depth) + 1)
         if "env" in self.config:
             env.update({str(k): str(v) for k, v in self.config["env"].items()})
         return env

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # relaydeck-bootstrap — idempotent detect → install → daemon-up for the
-# relaydeck-orchestrate skill. Safe to run repeatedly. Prints the dashboard
+# relaydeck skill. Safe to run repeatedly. Prints the dashboard
 # URL on success. Exit codes: 0 ok, 2 refused (already inside relaydeck),
 # 3 install failed, 4 daemon failed to come up.
 set -euo pipefail

@@ -473,7 +473,7 @@ class HarnessAgent(BaseAgent):
         # spawned agent "you are relaydeck-managed"; this adds "how deep".
         # In the usual single-daemon topology every managed agent is depth
         # 1; running a relaydeck daemon *inside* a managed agent (a
-        # fleet-of-fleets) makes its agents depth 2+. The relaydeck-orchestrate
+        # fleet-of-fleets) makes its agents depth 2+. The relaydeck
         # skill reads this to refuse bootstrapping a runaway nested fleet.
         try:
             parent_depth = int(os.environ.get("RELAYDECK_ORCHESTRATION_DEPTH", "0"))

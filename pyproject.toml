@@ -59,7 +59,7 @@ build-backend = "hatchling.build"
 packages = ["relaydeck", "plugins"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"skills/relaydeck-orchestrate" = "relaydeck/bundled_skills/relaydeck-orchestrate"
+"skills/relaydeck" = "relaydeck/bundled_skills/relaydeck"
 
 [dependency-groups]
 dev = [

@@ -20,7 +20,7 @@ all now closed, plus the command-center TUI rework and the publishable skill:
 | 2 | **`agent unblock`** — answer stuck native prompts headlessly | `transports/api.py`, `transports/cli.py` |
 | 3 | **`autopilot` plugin** — auto-answer *benign* prompts, hold the rest | `plugins/autopilot/` |
 | 4 | **`RELAYDECK_ORCHESTRATION_DEPTH`** — nesting marker for inside/outside | `harness/base.py` |
-| 5 | **`relaydeck-orchestrate` skill** — publishable outside-in on-ramp | `skills/relaydeck-orchestrate/` |
+| 5 | **`relaydeck` skill** — publishable outside-in on-ramp | `skills/relaydeck/` |
 | 6 | **`relaydeck view` command center** — tabbed panes + CLI console | `transports/view.py` |
 
 ---
@@ -117,14 +117,14 @@ parent + 1` (default 1). In the usual single-daemon topology every agent is
 depth 1; a relaydeck daemon run *inside* a managed agent makes its agents
 depth 2+. **Tests:** `tests/test_orchestration_depth.py` (3).
 
-## 5. Publishable `relaydeck-orchestrate` skill
+## 5. Publishable `relaydeck` skill
 
 **Why:** the headline. The existing `relaydeck-fleet`/`relaydeck-cli` skills
 assume you're *already inside* relaydeck. Nothing taught an **external** agent
 to install + drive relaydeck and orchestrate a fleet.
 
 **What:** a **standalone, publishable** skill bundle at
-`skills/relaydeck-orchestrate/` (drop into `~/.claude/skills/` or any
+`skills/relaydeck/` (drop into `~/.claude/skills/` or any
 SKILL.md harness):
 - `SKILL.md` — §0 inside-vs-outside detection (`RELAYDECK_AGENT_ID`); install
   + daemon-up; workspace + spawn; **observe** (the workers aren't "invisible"
@@ -140,7 +140,7 @@ SKILL.md harness):
 
 Validated by relaydeck's own parser: `validate_skill_dir → (True, [], [])`.
 The wheel force-includes it under `relaydeck/bundled_skills/`, and
-`relaydeck skills install-orchestrator` copies it into Claude and/or Codex
+`relaydeck skills install` copies it into Claude and/or Codex
 user skill roots.
 
 ## 6. `relaydeck view` command center

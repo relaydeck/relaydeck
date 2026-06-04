@@ -235,7 +235,7 @@ def open_cmd(path, name, plugins_opt, web, no_view, no_register):
 
     The daemon persists after you detach — `open` is the front door, not a
     session. Inside a managed agent it still works, but consider whether you
-    mean to nest a fleet (see the relaydeck-orchestrate skill).
+    mean to nest a fleet (see the relaydeck skill).
     """
     import webbrowser
 

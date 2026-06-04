@@ -298,7 +298,7 @@ def test_read_skill_metadata_reports_footprint(tmp_path):
     assert meta["name"] == "sample-skill"
 
 
-def test_install_orchestrator_skill_copies_to_user_roots(tmp_path, monkeypatch):
+def test_install_relaydeck_skill_copies_to_user_roots(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
 
@@ -312,17 +312,17 @@ def test_install_orchestrator_skill_copies_to_user_roots(tmp_path, monkeypatch):
     )
     commands.register(plugin)
 
-    result = CliRunner().invoke(group, ["install-orchestrator", "--target", "both"])
+    result = CliRunner().invoke(group, ["install", "--target", "both"])
     assert result.exit_code == 0, result.output
 
     for root in (tmp_path / "claude" / "skills", tmp_path / "codex" / "skills"):
-        dest = root / "relaydeck-orchestrate"
+        dest = root / "relaydeck"
         assert (dest / "SKILL.md").is_file()
         assert (dest / "scripts" / "relaydeck-bootstrap.sh").is_file()
         valid, errors, _warnings = relaydeck_skills.validate_skill_dir(dest)
         assert valid, errors
 
-    again = CliRunner().invoke(group, ["install-orchestrator", "--target", "codex"])
+    again = CliRunner().invoke(group, ["install", "--target", "codex"])
     assert again.exit_code == 0, again.output
     assert "already exists" in again.output
 

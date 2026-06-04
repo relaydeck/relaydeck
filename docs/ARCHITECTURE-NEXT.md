@@ -27,7 +27,7 @@ current code and sequences the work by leverage.
 ```
 # one gesture from a directory to a live command center
 relaydeck open .                 # find-or-register workspace, daemon up, TUI
-# or drive it from your agent via the relaydeck-orchestrate skill:
+# or drive it from your agent via the relaydeck skill:
 relaydeck agent create reviewer --type codex   --workspace .
 relaydeck agent create builder  --type claude-code --workspace .
 relaydeck agent start reviewer builder

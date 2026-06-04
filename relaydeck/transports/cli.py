@@ -200,6 +200,114 @@ def view(workspace: str | None):
     sys.exit(run_view(workspace=workspace))
 
 
+@main.command("open")
+@click.argument("path", type=click.Path(), required=False)
+@click.option("--name", default=None,
+              help="Workspace name when registering a new directory "
+                   "(default: the directory's basename).")
+@click.option("--plugin", "-p", "plugins_opt", multiple=True,
+              help="Plugin to enable if registering (repeatable; "
+                   "default: messaging + skills).")
+@click.option("--web", is_flag=True, default=False,
+              help="Open the web dashboard in a browser instead of the TUI.")
+@click.option("--no-view", "no_view", is_flag=True, default=False,
+              help="Ensure the workspace + daemon, print context, but don't "
+                   "launch a viewer (good for scripts / the orchestrate skill).")
+@click.option("--no-register", "no_register", is_flag=True, default=False,
+              help="Fail instead of auto-registering an unowned directory.")
+def open_cmd(path, name, plugins_opt, web, no_view, no_register):
+    """Context-aware on-ramp: open a workspace and start watching it.
+
+    The one gesture that takes you from a directory to a live command
+    center. Given a PATH (default: the current directory) it:
+
+    \b
+      1. finds the workspace that owns PATH — or registers it as a new one
+         (auto, unless --no-register);
+      2. makes sure the daemon is up (starts it if not);
+      3. opens the viewer — the built-in TUI, or the web dashboard (--web).
+
+    \b
+    relaydeck open                 # this directory → register if needed → TUI
+    relaydeck open ~/code/api      # a specific repo
+    relaydeck open . --web         # open the dashboard in a browser
+    relaydeck open . --no-view     # just ensure workspace+daemon (scripts)
+
+    The daemon persists after you detach — `open` is the front door, not a
+    session. Inside a managed agent it still works, but consider whether you
+    mean to nest a fleet (see the relaydeck-orchestrate skill).
+    """
+    import webbrowser
+
+    from relaydeck.daemon import daemon_status, start_daemon
+    from relaydeck.state import (
+        _resolve_workspace_from_cwd,
+        get_daemon_bind_host,
+        get_daemon_url,
+    )
+
+    p = Path(path or ".").resolve()
+    if not p.is_dir():
+        console.print(f"[red]✗[/] not a directory: {p}")
+        raise SystemExit(2)
+
+    # 1. Find-or-register. Strict path ownership (cwd-ancestry), NOT the
+    # durable-default fallback — an unowned dir must register, not silently
+    # attach to an unrelated workspace.
+    ws = _resolve_workspace_from_cwd(p)
+    if ws is None:
+        if no_register:
+            console.print(
+                f"[red]✗[/] no workspace owns {p}. "
+                "Register it with [bold]relaydeck init[/] or drop --no-register."
+            )
+            raise SystemExit(1)
+        plugins = list(plugins_opt) or ["messaging", "skills"]
+        _workspace_add_impl(str(p), name, plugins)
+        ws = _resolve_workspace_from_cwd(p) or (name or p.name)
+    else:
+        console.print(f"[dim]·[/] workspace [bold]{ws}[/] owns {p}")
+
+    # 2. Ensure the daemon is up (idempotent).
+    home = _get_config_home()
+    host = get_daemon_bind_host() or "127.0.0.1"
+    status = daemon_status(home, host=host, port=8765)
+    if not status["running"]:
+        console.print("[dim]·[/] daemon down — starting it…")
+        result = start_daemon(home, host=host, port=8765, wait_seconds=5.0)
+        if result.get("exited_during_startup"):
+            console.print(
+                f"[red]✗[/] daemon exited during startup "
+                f"(rc={result.get('returncode')}). See "
+                "[bold]relaydeck daemon logs[/]."
+            )
+            raise SystemExit(1)
+        console.print(f"[green]✓[/] daemon ready (pid {result['pid']})")
+    else:
+        console.print(f"[dim]·[/] daemon already running ({status['state']})")
+
+    dashboard = get_daemon_url()
+
+    # 3. Open the viewer.
+    if no_view:
+        console.print(
+            f"[green]✓[/] [bold]{ws}[/] ready — dashboard {dashboard}\n"
+            f"  [dim]watch it with[/] relaydeck view -w {ws}  "
+            f"[dim]·[/]  relaydeck open . --web"
+        )
+        return
+    if web:
+        console.print(f"[green]✓[/] opening dashboard → {dashboard}")
+        try:
+            webbrowser.open(dashboard)
+        except Exception as exc:
+            console.print(f"[yellow]·[/] couldn't launch a browser ({exc}); "
+                          f"open {dashboard} yourself.")
+        return
+    from relaydeck.transports.view import run_view
+    sys.exit(run_view(workspace=ws))
+
+
 # ── relaydeck serve ───────────────────────────────────────────────────────
 
 

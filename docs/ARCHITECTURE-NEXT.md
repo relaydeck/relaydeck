@@ -201,12 +201,20 @@ reconstruct the full timeline. No new transport — just disciplined emission.
       last screen is recoverable. *(deferred)*
 
 **Phase 3 — context/usage/limit awareness (§4)**
-- [ ] `agent.context` fullness event per harness + a Context panel in TUI/web.
-- [ ] Provider-scoped usage/limit roll-up events.
-- [ ] `agent compact` (KV-safe, in-place where supported) + fresh-session
-      fallback with carried handover.
-- [ ] `manager` policy plugin (compact / switch-model / pause / gate-spawns),
-      every decision an auditable `manager.action`.
+- [x] `agent.context` fullness event + a Context tab — the `context-watch`
+      plugin computes fill (latest prompt tokens vs the model's context window
+      from models.dev) off `usage.record` and emits warn/critical/recovery.
+- [x] `manager` policy plugin — `agent.context` (critical) + `usage_limits.exceeded`
+      → auditable `manager.action`; recommend by default, opt-in fresh-session
+      / pause. Composes with usage-limits/autopilot/hitl.
+- [ ] Provider-scoped usage/limit roll-up events (account-wide 5h/weekly across
+      all agents on one key, not just per-agent). *(next)*
+- [ ] `agent compact` (KV-safe in-place where the harness supports it, e.g.
+      claude-code `/compact`; fresh-session+handover fallback) — wire as the
+      manager's `compact` action and the one-tap shortcut behind a
+      context-pressure alert. *(next)*
+- [ ] Bridge `agent.message_failed` (orchestrator SSE bus) onto the plugin bus
+      so the manager can react to undelivered messages too. *(follow-up)*
 
 **Phase 4 — polish the OS feel**
 - [ ] Wire autopilot `held`/`unblocked` + the new context/limit events

@@ -15,6 +15,11 @@ GitHub repo hardening.
    `relaydeck/__init__.py`, rolls `CHANGELOG.md`'s `[Unreleased]` into a dated
    section, and runs `uv lock` so `uv.lock` matches the new workspace version.
    The workflow opens a PR; review and **rebase-merge** it.
+
+   > ⚠️ **Do not hand-edit `CHANGELOG.md`.** It is generated/rolled by
+   > `scripts/bump_version.py`; manual entries get clobbered on the next bump
+   > and drift from the tags `version_check` relies on. Describe changes in your
+   > PR/commit and let this flow assemble the log.
 2. **Cut a GitHub Release.** Create a release with tag `vX.Y.Z` (matching the
    new `pyproject` version) and paste the changelog notes.
 3. **PyPI publish is automatic.** `release.yml` triggers on the published

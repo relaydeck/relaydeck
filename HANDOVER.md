@@ -50,10 +50,9 @@ an agent's session. Documented in the skill's `reference/commands.md`.
 **Tests:** `tests/test_events_broadcast.py` (14) — orchestrator persist+publish,
 endpoint happy/validation, CLI payload assembly, daemon-unreachable.
 
-**Known follow-up:** `relaydeck agent events --follow` subscribes to the
-*local-process* `_bus`; against a running daemon (separate process) it sees
-nothing. `events tail` uses the daemon SSE (correct). Aligning `agent events
--f` onto the SSE path is a worthwhile follow-up (out of scope here).
+`relaydeck agent events --follow` now follows the daemon SSE endpoint, matching
+`events tail`; `tests/test_agent_events_cli.py` pins that it opens
+`/api/agents/{id}/events?stream=true` instead of a local in-process bus.
 
 ## 2. `agent unblock` + input endpoint
 
@@ -140,12 +139,9 @@ SKILL.md harness):
 - `README.md` — install + the market/viral plan + GTM checklist.
 
 Validated by relaydeck's own parser: `validate_skill_dir → (True, [], [])`.
-
-**Follow-up (noted in README):** package the bundle inside the `relaydeck`
-wheel + a `relaydeck skill install-orchestrator` command that copies it into
-`~/.claude/skills` — one-command arming for existing users. (Repo root
-`skills/` is the canonical source; pyproject ships `relaydeck` + `plugins`,
-not `skills/`, so the bundle is currently copy-to-install.)
+The wheel force-includes it under `relaydeck/bundled_skills/`, and
+`relaydeck skills install-orchestrator` copies it into Claude and/or Codex
+user skill roots.
 
 ## 6. `relaydeck view` command center
 
@@ -188,10 +184,11 @@ console runs a CLI command and shows the Events tab.
 
 ## Testing
 
-Targeted verification across **every subsystem touched** is green
-(~430 tests): events 14, unblock 13, autopilot 14, depth 3, view 5, plugin-load
-(incl. autopilot) + CLI 115, harness/PTY/messaging/worktrees 217, plus hitl +
-semantic. Run them with:
+Targeted verification across **every subsystem touched** is green: events,
+unblock, autopilot, depth, view, plugin TUI, agent-event follow, skills
+installer, self-update, bundle-manifest coverage, plugin-load/CLI, harness/PTY,
+messaging/worktrees, plus hitl + semantic. Run the main command-center slice
+with:
 
 ```sh
 uv run pytest tests/test_events_broadcast.py tests/test_agent_unblock.py \
@@ -200,15 +197,12 @@ uv run pytest tests/test_events_broadcast.py tests/test_agent_unblock.py \
 ```
 
 > **Full-suite note.** `uv run pytest -m "not e2e and not docker"` **passes**
-> (pytest exit 0, ~2089 tests). One **pre-existing, unrelated** test is
-> slow/occasionally-blocking: `tests/test_self_update_api.py::test_update_default_cmd_is_reinstall`
-> blocks on a `concurrent.futures` `result()` in the self-update path
-> (subprocess/network — `faulthandler` pinpointed it at `test_self_update_api.py:81`).
-> A first run stalled there for >20 min (transient network/subprocess wait);
-> a second run completed normally. Recommend installing `pytest-timeout` and
-> giving that test a hard timeout + a mocked update channel. **None of the
-> changes here are implicated** — plugin-load, CLI, harness, PTY, messaging,
-> view, autopilot, events, unblock, and depth suites are all green.
+> (pytest exit 0, 2102 tests). A previous run exposed an occasionally-blocking
+> `tests/test_self_update_api.py::test_update_default_cmd_is_reinstall`; the
+> cause was the test mock replacing `os.open` with fd `3` while leaving
+> `os.close` real, which could close a live pytest/TestClient descriptor. The
+> test now mocks `os.close` too and `uv run pytest tests/test_self_update_api.py
+> -q` passes normally.
 
 ## Conventions honored
 
@@ -221,11 +215,6 @@ uv run pytest tests/test_events_broadcast.py tests/test_agent_unblock.py \
 
 ## Where to pick up next
 
-1. Give `test_self_update_api.py::test_update_default_cmd_is_reinstall` a hard
-   timeout + a mocked update channel (and install `pytest-timeout`) — it can
-   block for minutes on a real `future.result()`.
-2. Package the orchestrate skill in the wheel + `relaydeck skill install-orchestrator`.
-3. Align `relaydeck agent events --follow` onto the daemon SSE path.
-4. Wire the autopilot `held`/`unblocked` events into the dashboard event feed
+1. Wire the autopilot `held`/`unblocked` events into the dashboard event feed
    prominently (they already ride the plugin bus → SSE bridge like hitl).
-5. Consider an `autopilot.held` → one-tap `prompts`/`hitl` escalation shortcut.
+2. Consider an `autopilot.held` → one-tap `prompts`/`hitl` escalation shortcut.

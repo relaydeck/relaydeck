@@ -2445,6 +2445,283 @@ def agent_events(agent_id: str, follow: bool, since_id: int,
                 )
 
 
+@agent.command("unblock")
+@click.argument("agent_id")
+@click.option("--answer", "-a", default=None,
+              help="Type this text and press Enter (answer a [y/N] / prompt).")
+@click.option("--enter", "press_enter", is_flag=True, default=False,
+              help="Just press Enter (e.g. 'press enter to continue').")
+@click.option("--key", "key", default=None,
+              help="Send one named key: enter, esc, ctrl-c, tab, up, down, "
+                   "left, right, y, n, space, backspace.")
+@click.option("--show/--no-show", "show", default=True,
+              help="Print the agent's current screen first (default: on).")
+def agent_unblock(agent_id: str, answer: str | None, press_enter: bool,
+                  key: str | None, show: bool):
+    """Answer a running agent that's blocked on a native prompt.
+
+    A "trust this folder? [y/N]", an "accept terms", a "press enter to
+    continue", an update notice — any native prompt stalls an unattended
+    agent and breaks orchestration. This sends a response straight to its
+    PTY so work continues, without attaching a terminal.
+
+    \b
+    relaydeck agent unblock alice                # show what it's stuck on
+    relaydeck agent unblock alice --answer y      # type y + Enter
+    relaydeck agent unblock alice --enter         # press Enter
+    relaydeck agent unblock alice --key esc       # dismiss
+
+    With no action flag it ONLY shows the screen — so a dangerous default
+    is never accepted by accident; answer explicitly. To auto-answer the
+    benign cases fleet-wide, enable the `autopilot` plugin.
+    """
+    if sum([answer is not None, press_enter, key is not None]) > 1:
+        console.print("[red]✗[/] pass at most one of --answer / --enter / --key.")
+        raise SystemExit(2)
+
+    if show:
+        outcome, payload = _get_from_daemon(
+            f"/api/agents/{agent_id}/screen?cols=120&rows=40", timeout=5,
+        )
+        if outcome == _POST_OK and isinstance(payload, str):
+            tail = "\n".join(payload.rstrip().splitlines()[-12:])
+            console.print("[dim]── current screen (tail) ──[/]")
+            console.print(tail, highlight=False, markup=False)
+            console.print("[dim]───────────────────────────[/]")
+        elif outcome == _POST_DAEMON_ERROR:
+            console.print(f"[yellow]·[/] can't read screen: {payload}")
+
+    if key is not None:
+        body, desc = {"key": key}, f"key {key!r}"
+    elif press_enter:
+        body, desc = {"key": "enter"}, "Enter"
+    elif answer is not None:
+        body, desc = {"data": answer, "enter": True}, f"{answer!r} + Enter"
+    else:
+        console.print(
+            "[dim]No action sent. Re-run with [bold]--answer <text>[/], "
+            "[bold]--enter[/], or [bold]--key <name>[/] to unblock.[/]"
+        )
+        return
+
+    outcome, resp = _json_to_daemon("POST", f"/api/agents/{agent_id}/input", body)
+    if outcome == _POST_OK and isinstance(resp, dict):
+        if resp.get("ok"):
+            console.print(f"[green]✓[/] sent {desc} to [bold]{agent_id}[/].")
+        else:
+            console.print(
+                f"[yellow]·[/] write to {agent_id} returned not-ok "
+                "(PTY may have just closed)."
+            )
+        return
+    if outcome == _POST_DAEMON_ERROR:
+        console.print(f"[red]✗[/] {resp}")
+        raise SystemExit(1)
+    console.print(
+        f"[red]✗[/] daemon unreachable ({resp}). "
+        "Start it with [bold]relaydeck daemon start[/]."
+    )
+    raise SystemExit(1)
+
+
+# ── Events: emit / broadcast / tail ──────────────────────────────────
+
+
+def _parse_data_pairs(pairs: tuple[str, ...]) -> dict:
+    """Turn repeated `--data key=value` options into a JSON payload. Each
+    value is parsed as JSON when it can be (`n=3` → int, `ok=true` → bool,
+    `tags=["a"]` → list), else kept as a string — so the common case
+    (`--data service=api`) needs no quoting."""
+    out: dict = {}
+    for raw in pairs:
+        if "=" not in raw:
+            raise click.BadParameter(f"--data expects key=value, got {raw!r}")
+        key, _, val = raw.partition("=")
+        key = key.strip()
+        if not key:
+            raise click.BadParameter(f"--data has an empty key in {raw!r}")
+        try:
+            out[key] = json.loads(val)
+        except (ValueError, TypeError):
+            out[key] = val
+    return out
+
+
+def _emit_event_to_daemon(event_type: str, payload: dict, agent_id: str | None) -> None:
+    """POST one event to the daemon's /api/events/emit and report. Shared by
+    `events emit` and `broadcast`."""
+    body: dict = {"type": event_type, "payload": payload}
+    if agent_id:
+        body["agent_id"] = agent_id
+    outcome, resp = _json_to_daemon("POST", "/api/events/emit", body)
+    if outcome == _POST_OK and isinstance(resp, dict):
+        console.print(
+            f"[green]✓[/] emitted [cyan]{resp.get('type', event_type)}[/] "
+            f"(id #{resp.get('id', '?')}, from "
+            f"{resp.get('agent_id', agent_id or 'operator')})"
+        )
+        return
+    if outcome == _POST_DAEMON_ERROR:
+        console.print(f"[red]✗[/] daemon rejected emit: {resp}")
+    else:
+        console.print(
+            f"[red]✗[/] daemon unreachable ({resp}). "
+            "Start it with [bold]relaydeck daemon start[/]."
+        )
+    raise SystemExit(1)
+
+
+@main.group("events")
+def events_group():
+    """Emit and tail events on the live orchestration stream.
+
+    The stream is the same firehose the web dashboard, the `view` TUI, and
+    `agent events` consume — `emit` / `broadcast` write to it, `tail`
+    follows the whole fleet's events live.
+    """
+
+
+@events_group.command("emit")
+@click.argument("event_type")
+@click.option("--data", "data_pairs", multiple=True, metavar="KEY=VALUE",
+              help="Structured payload field (repeatable). Value parsed as "
+                   "JSON when possible, else kept as a string.")
+@click.option("--message", "-m", default=None,
+              help="Shorthand for --data message=<text>.")
+@click.option("--agent", "agent_id", default=None,
+              help="Emitter label for the event "
+                   "(default: $RELAYDECK_AGENT_ID, else 'operator').")
+def events_emit(event_type: str, data_pairs: tuple[str, ...],
+                message: str | None, agent_id: str | None):
+    """Emit a custom event TYPE onto the live stream.
+
+    \b
+    relaydeck events emit deploy.started --data service=api --data version=2.3
+    relaydeck events emit build.failed -m "tsc errors in web/"
+    """
+    import os
+    payload = _parse_data_pairs(data_pairs)
+    if message is not None:
+        payload["message"] = message
+    agent_id = agent_id or os.environ.get("RELAYDECK_AGENT_ID")
+    _emit_event_to_daemon(event_type, payload, agent_id)
+
+
+@events_group.command("tail")
+@click.option("--type", "type_filter", default=None,
+              help="Substring match on event type (e.g. 'agent.', 'deploy').")
+@click.option("--agent", "agent_filter", default=None,
+              help="Only show events whose agent_id matches.")
+@click.option("--limit", "limit", type=int, default=30,
+              help="One-shot mode (--agent, no -f): most recent N events.")
+@click.option("-f", "--follow", "follow", is_flag=True, default=False,
+              help="Stream events live over SSE. Ctrl-C to stop.")
+def events_tail(type_filter: str | None, agent_filter: str | None,
+                limit: int, follow: bool):
+    """Tail the whole fleet's event stream.
+
+    Without -f, prints recent history (requires --agent — there is no
+    global history endpoint) and exits; with -f, follows the live
+    firehose the dashboard and `view` TUI watch.
+    """
+    import urllib.error
+    import urllib.request
+
+    from relaydeck.state import get_daemon_url
+
+    def _show(ev: dict) -> None:
+        t = ev.get("type")
+        if type_filter and (t is None or type_filter not in t):
+            return
+        aid = ev.get("agent_id") or ev.get("agent") or ""
+        if agent_filter and aid != agent_filter:
+            return
+        payload = ev.get("payload", {})
+        try:
+            ps = json.dumps(payload, default=str)
+        except (TypeError, ValueError):
+            ps = str(payload)
+        idp = f"#{ev['id']} " if ev.get("id") else ""
+        who = f"[magenta]{aid}[/] " if aid else ""
+        console.print(f"  [dim]{idp}[/]{who}[cyan]{t}[/] {ps[:140]}")
+
+    if not follow:
+        if not agent_filter:
+            console.print(
+                "[dim]No global event history; use [bold]-f[/] to follow live, "
+                "or pass [bold]--agent <id>[/] for one agent's history.[/]"
+            )
+            return
+        outcome, resp = _get_from_daemon(f"/api/agents/{agent_filter}/events")
+        if outcome == _POST_OK and isinstance(resp, list):
+            for ev in resp[-limit:]:
+                _show(ev)
+            return
+        console.print(f"[yellow]·[/] {resp}")
+        return
+
+    url = get_daemon_url().rstrip("/") + "/api/events"
+    req = urllib.request.Request(url, headers=_daemon_auth_headers(), method="GET")
+    console.print("[dim]Following fleet events (Ctrl+C to stop)...[/]")
+    try:
+        resp = urllib.request.urlopen(req, context=_daemon_ssl_context())
+    except (urllib.error.URLError, OSError) as exc:
+        console.print(
+            f"[red]✗[/] can't reach the daemon ({type(exc).__name__}: {exc}). "
+            "Start it with [bold]relaydeck daemon start[/]."
+        )
+        raise SystemExit(1)
+    buf = ""
+    try:
+        for line_bytes in resp:
+            line = line_bytes.decode("utf-8", "replace").rstrip("\r\n")
+            if not line:
+                if buf:
+                    try:
+                        _show(json.loads(buf))
+                    except (TypeError, ValueError):
+                        pass
+                buf = ""
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                if buf:
+                    buf += "\n"
+                buf += line[5:].lstrip()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/]")
+    finally:
+        try:
+            resp.close()
+        except Exception:
+            pass
+
+
+@main.command("broadcast")
+@click.argument("message")
+@click.option("--type", "event_type", default="operator.broadcast",
+              help="Event type to emit (default: operator.broadcast).")
+@click.option("--data", "data_pairs", multiple=True, metavar="KEY=VALUE",
+              help="Extra structured fields (repeatable, JSON-coerced).")
+@click.option("--agent", "agent_id", default=None,
+              help="Emitter label (default: $RELAYDECK_AGENT_ID, else 'operator').")
+def broadcast(message: str, event_type: str, data_pairs: tuple[str, ...],
+              agent_id: str | None):
+    """Broadcast a one-line MESSAGE to the whole fleet's event stream.
+
+    A friendly wrapper over `events emit`: announces an ambient event the
+    dashboard, the `view` TUI, and `events tail` all see. This is NOT inbox
+    delivery — to push text into an agent's session use
+    [bold]relaydeck agent send[/] / [bold]relaydeck workspace message[/].
+    """
+    import os
+    payload = _parse_data_pairs(data_pairs)
+    payload["message"] = message
+    agent_id = agent_id or os.environ.get("RELAYDECK_AGENT_ID")
+    _emit_event_to_daemon(event_type, payload, agent_id)
+
+
 def _workspace_add_impl(path: str, name: str | None, plugins: list[str]) -> None:
     """Implementation shared by `workspace add` and `init`."""
 

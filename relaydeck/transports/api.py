@@ -2035,6 +2035,87 @@ def create_app(config_home: Path | None = None) -> FastAPI:
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
+    @app.post("/api/events/emit")
+    async def emit_event_api(body: dict[str, Any]):
+        """Publish a custom event onto the live stream (and persist it).
+
+        The write-side twin of the `/api/events` SSE feed: `relaydeck
+        broadcast` / `relaydeck events emit` POST here so an operator — or
+        an orchestrating agent reporting status — can announce an event on
+        the same bus the dashboard, the `view` TUI, and `agent events`
+        already consume. Distinct from `/api/workspaces/{ws}/messages`,
+        which delivers text into agents' inboxes; this is an ambient
+        announcement, not inbox delivery.
+        """
+        etype = str(body.get("type") or "").strip()
+        if not etype:
+            raise HTTPException(400, "event 'type' is required")
+        payload = body.get("payload") or {}
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "'payload' must be a JSON object")
+        agent_id = str(body.get("agent_id") or "operator").strip() or "operator"
+        ev_id = orch.emit_event(agent_id, etype, payload)
+        return {"ok": True, "id": ev_id, "type": etype, "agent_id": agent_id}
+
+    @app.post("/api/agents/{agent_id}/input")
+    async def send_agent_input(agent_id: str, body: dict[str, Any]):
+        """Send a line of input (or one named key) to a running agent's PTY.
+
+        The headless twin of the term WebSocket's stdin frame
+        (`instance.send_input`): it lets `relaydeck agent unblock` and the
+        autopilot plugin answer a harness blocked on a native prompt
+        ("trust this folder? [y/N]", "press enter to continue", an update
+        notice) without a human attaching a terminal. Same sanctioned write
+        path the live terminal uses — it never touches the PTY read loop
+        (the "terminal untouchable" contract).
+
+        Body: `{"data": "<text>", "enter": true|false}` to type text
+        (optionally submitting with Enter), or `{"key": "<name>"}` to send
+        one key (enter, esc, ctrl-c, tab, up, down, left, right, y, n,
+        space, backspace).
+        """
+        instance: Any = orch.get_running_instance(agent_id)
+        if instance is None or not hasattr(instance, "send_input"):
+            if orch.get_agent(agent_id) is None:
+                raise HTTPException(404, f"Agent {agent_id} not found")
+            raise HTTPException(
+                409, f"Agent {agent_id} is not running — no PTY to write to"
+            )
+
+        key = body.get("key")
+        if key is not None:
+            seqs = {
+                "enter": b"\r", "return": b"\r", "tab": b"\t",
+                "esc": b"\x1b", "escape": b"\x1b", "space": b" ",
+                "backspace": b"\x7f", "ctrl-c": b"\x03", "ctrl-d": b"\x04",
+                "up": b"\x1b[A", "down": b"\x1b[B",
+                "right": b"\x1b[C", "left": b"\x1b[D",
+                "y": b"y", "n": b"n",
+            }
+            seq = seqs.get(str(key).strip().lower())
+            if seq is None:
+                raise HTTPException(
+                    400, f"unknown key {key!r}; known: {', '.join(sorted(seqs))}"
+                )
+            ok = bool(instance.send_input(seq))
+            return {"ok": ok, "agent_id": agent_id, "sent": {"key": str(key).lower()}}
+
+        data = body.get("data")
+        if data is None:
+            raise HTTPException(
+                400, "provide 'data' (text), 'key' (named key), or data + enter"
+            )
+        text = str(data)
+        enter = bool(body.get("enter", False))
+        if enter:
+            # text + submit via the harness's submit semantics (handles
+            # raw-mode TUIs / paste-debounce exactly like a peer message);
+            # empty text + enter is just a bare Enter.
+            ok = bool(instance.send_message(text))
+        else:
+            ok = bool(instance.send_input(text.encode()))
+        return {"ok": ok, "agent_id": agent_id, "sent": {"data": text, "enter": enter}}
+
     # ── WebSocket (harness PTY) ──────────────────────────────────
     #
     # Binary frame protocol — 1-byte type prefix + payload:

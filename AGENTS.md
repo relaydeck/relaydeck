@@ -22,6 +22,10 @@ ignores repo edits.
   governance: **Package separation** (below) and [CONTRIBUTING.md](CONTRIBUTING.md).
 - **One primitive: the agent.** Every long-lived thing the daemon does is a
   `BaseAgent` subclass (`agents_base.py`). No parallel runtime surfaces.
+- **Never hand-edit `CHANGELOG.md` — it's automated.** `scripts/bump_version.py`
+  (run by the `version-bump` workflow) rolls `[Unreleased]` into a dated section
+  at release time. Don't add entries or sections by hand; describe changes in the
+  PR/commit and let the release flow assemble the log. See [docs/RELEASE.md](docs/RELEASE.md).
 - **YAML is the spec, SQLite mirrors it.** Agent defs live in
   `~/.relaydeck/agents/<id>.yaml` — source of truth for `id`/`name`/`type`/
   `workspace`/`config`/`auto_start`/`purpose`/`tags`/`system_prompt`/

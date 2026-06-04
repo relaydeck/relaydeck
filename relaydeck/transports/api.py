@@ -388,6 +388,61 @@ def _sweep_all_uploads(uploads_root: Path) -> None:
             pass
 
 
+def _plugin_bus_sse(bus: Any, event_name: str, predicate, *, heartbeat: float = 15.0):
+    """Bridge a plugin-bus (pyee) event into an SSE async generator WITHOUT
+    parking a ThreadPoolExecutor thread per stream.
+
+    The pyee handler runs on whatever thread emits the event; it hands the
+    payload to *this request's* event loop with `call_soon_threadsafe`, so the
+    generator just `await`s an `asyncio.Queue` (zero threads while idle). Same
+    scaling property as the orchestrator EventBus async path — many concurrent
+    `agent wait` / `inbox -f` watchers no longer contend with control-plane
+    `asyncio.to_thread` calls. Bounded, drop-oldest. Must be called from within
+    the running loop.
+    """
+    loop = asyncio.get_running_loop()
+    aq: asyncio.Queue = asyncio.Queue(maxsize=2000)
+
+    def _put(data: dict) -> None:
+        try:
+            aq.put_nowait(data)
+        except asyncio.QueueFull:
+            try:
+                aq.get_nowait()
+                aq.put_nowait(data)
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                pass
+
+    def _handler(event) -> None:
+        data = event.data or {}
+        if not predicate(data):
+            return
+        try:
+            loop.call_soon_threadsafe(_put, data)
+        except RuntimeError:
+            pass  # loop closed mid-shutdown
+
+    bus.subscribe(event_name, _handler)
+
+    async def gen():
+        try:
+            while True:
+                try:
+                    data = await asyncio.wait_for(aq.get(), timeout=heartbeat)
+                    yield f"data: {json.dumps(data)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            try:
+                bus.unsubscribe(_handler)
+            except Exception:
+                pass
+
+    return gen
+
+
 # ── App factory ──────────────────────────────────────────────────────
 
 
@@ -1674,8 +1729,6 @@ def create_app(config_home: Path | None = None) -> FastAPI:
         transition matching this agent. Heartbeats every 15s so an
         idle stream stays alive through proxies and urllib readers.
         """
-        import queue as _queue
-
         if not orch.get_agent(agent_id):
             raise HTTPException(404, f"Agent {agent_id} not found")
 
@@ -1684,36 +1737,10 @@ def create_app(config_home: Path | None = None) -> FastAPI:
         if bus is None:
             raise HTTPException(503, "plugin bus not available")
 
-        q: _queue.Queue = _queue.Queue()
-
-        def _handler(event):
-            data = event.data or {}
-            if data.get("agent_id") == agent_id:
-                try:
-                    q.put_nowait(data)
-                except Exception:
-                    pass
-
-        bus.subscribe("agent.status_changed", _handler)
-
-        async def gen():
-            try:
-                while True:
-                    try:
-                        data = await asyncio.get_event_loop().run_in_executor(
-                            None, q.get, True, 15.0,
-                        )
-                        yield f"data: {json.dumps(data)}\n\n"
-                    except _queue.Empty:
-                        yield ": heartbeat\n\n"
-            except asyncio.CancelledError:
-                pass
-            finally:
-                try:
-                    bus.unsubscribe(_handler)
-                except Exception:
-                    pass
-
+        gen = _plugin_bus_sse(
+            bus, "agent.status_changed",
+            lambda data: data.get("agent_id") == agent_id,
+        )
         return StreamingResponse(
             gen(),
             media_type="text/event-stream",
@@ -1917,53 +1944,24 @@ def create_app(config_home: Path | None = None) -> FastAPI:
 
         Backs `relaydeck workspace inbox -f`. Subscribes to the plugin
         event bus for `agent.message`, filters by `workspace`, and
-        yields one SSE `data:` line per delivery. Plugin-bus handlers
-        run in worker threads, so we route through a thread-safe
-        queue.Queue and `run_in_executor(q.get, ...)`.
+        yields one SSE `data:` line per delivery. The plugin-bus handler
+        runs on a worker thread but hands events to this loop without
+        parking a pool thread (see `_plugin_bus_sse`).
 
         Heartbeats every ~15s to keep idle proxies and the CLI's
         urllib reader happy.
         """
-        import queue as _queue
-
         registry = getattr(app.state, "plugin_registry", None)
         bus = getattr(registry, "event_bus", None) if registry else None
         if bus is None:
             raise HTTPException(503, "plugin bus not available")
 
-        q: _queue.Queue = _queue.Queue()
-
-        def _handler(event):
-            data = event.data or {}
-            # Filter to this workspace. The `agent.message` payload
-            # always carries `workspace` because the orchestrator
-            # denormalizes it at insert time.
-            if data.get("workspace") == workspace:
-                try:
-                    q.put_nowait(data)
-                except Exception:
-                    pass
-
-        bus.subscribe("agent.message", _handler)
-
-        async def gen():
-            try:
-                while True:
-                    try:
-                        data = await asyncio.get_event_loop().run_in_executor(
-                            None, q.get, True, 15.0,
-                        )
-                        yield f"data: {json.dumps(data)}\n\n"
-                    except _queue.Empty:
-                        yield ": heartbeat\n\n"
-            except asyncio.CancelledError:
-                pass
-            finally:
-                try:
-                    bus.unsubscribe(_handler)
-                except Exception:
-                    pass
-
+        # Filter to this workspace. The `agent.message` payload always
+        # carries `workspace` (the orchestrator denormalizes it at insert).
+        gen = _plugin_bus_sse(
+            bus, "agent.message",
+            lambda data: data.get("workspace") == workspace,
+        )
         return StreamingResponse(
             gen(),
             media_type="text/event-stream",

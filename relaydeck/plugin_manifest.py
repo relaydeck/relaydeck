@@ -113,6 +113,31 @@ class UIContribution:
         return out
 
 
+@dataclass(frozen=True)
+class TuiTab:
+    """A `relaydeck view` (terminal TUI) tab contributed by a plugin —
+    the terminal-side mirror of `[plugin.ui] tabs` for the web dashboard.
+
+    The `view` client renders the tab by GETting `endpoint` (mounted under
+    `/api/plugins/<plugin>/`), expecting JSON `{"title"?: str, "lines":
+    [str, ...]}` (or plain text). No plugin widget code runs in the client —
+    it stays a thin HTTP consumer, consistent with the CLI/daemon split.
+    """
+
+    id: str
+    title: str = ""
+    endpoint: str = "tui"
+    order: int = 100
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "endpoint": self.endpoint,
+            "order": self.order,
+        }
+
+
 VALID_TRUST_LEVELS = frozenset({"bundled", "local", "signed", "untrusted"})
 
 
@@ -147,6 +172,7 @@ class PluginManifest:
     ui_header_chips: tuple[UIContribution, ...] = ()
     ui_agent_tiles: tuple[UIContribution, ...] = ()
     ui_widgets: tuple[UIContribution, ...] = ()
+    tui_tabs: tuple[TuiTab, ...] = ()
     skills: dict[str, str] = field(default_factory=dict)
     path: Path | None = None
     manifest_hash: str = ""
@@ -164,6 +190,7 @@ class PluginManifest:
             "header_chips": [item.to_dict() for item in self.ui_header_chips],
             "agent_tiles": [item.to_dict() for item in self.ui_agent_tiles],
             "widgets": [item.to_dict() for item in self.ui_widgets],
+            "tui": [item.to_dict() for item in self.tui_tabs],
         }
 
 
@@ -227,6 +254,7 @@ def load_manifest(path: Path) -> PluginManifest:
         ui_header_chips=tuple(_parse_ui_list(ui.get("header_chips"))),
         ui_agent_tiles=tuple(_parse_ui_list(ui.get("agent_tiles"))),
         ui_widgets=tuple(_parse_ui_list(ui.get("widgets"))),
+        tui_tabs=tuple(_parse_tui_list((plugin.get("tui") or {}).get("tabs"))),
         skills=_parse_skills(plugin.get("skills") or {}),
         path=path,
         manifest_hash="sha256:" + hashlib.sha256(raw_text.encode()).hexdigest(),
@@ -289,6 +317,33 @@ def _parse_settings(raw: Any) -> list[SettingsField]:
             multiline=bool(spec.get("multiline") or False),
         ))
     return fields
+
+
+def _parse_tui_list(raw: Any) -> list[TuiTab]:
+    """Parse `[plugin.tui] tabs = [...]`. Each entry: id (required), title,
+    endpoint (default "tui"), order."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ManifestError("[plugin.tui] tabs must be a list")
+    out: list[TuiTab] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ManifestError("[plugin.tui] tab entries must be tables")
+        ident = str(item.get("id") or "").strip()
+        if not ident:
+            raise ManifestError("[plugin.tui] tab id is required")
+        if ident in seen:
+            raise ManifestError(f"duplicate [plugin.tui] tab id: {ident}")
+        seen.add(ident)
+        out.append(TuiTab(
+            id=ident,
+            title=str(item.get("title") or ident),
+            endpoint=str(item.get("endpoint") or "tui").strip("/") or "tui",
+            order=int(item.get("order") or 100),
+        ))
+    return out
 
 
 def _parse_ui_list(raw: Any) -> list[UIContribution]:

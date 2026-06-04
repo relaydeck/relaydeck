@@ -362,7 +362,7 @@ def serve(host: str | None, port: int, reload: bool,
     app = create_app(home)
 
     # Register plugin API routes, mount static dirs, collect UI manifests.
-    ui_manifest: dict[str, list] = {"tabs": [], "header_chips": [], "agent_tiles": [], "widgets": []}
+    ui_manifest: dict[str, list] = {"tabs": [], "header_chips": [], "agent_tiles": [], "widgets": [], "tui": []}
     for entry in registry.all():
         try:
             entry.instance.register_api_routes(app)
@@ -427,8 +427,20 @@ def serve(host: str | None, port: int, reload: bool,
             if mod and not str(mod).startswith(("/", "http://", "https://")):
                 wd["module"] = f"/static/plugins/{entry.name}/{mod}"
             ui_manifest["widgets"].append(wd)
+        # Terminal-TUI tabs (`relaydeck view`). Unlike web `module`s, these
+        # carry an `endpoint` the view client GETs for the tab's content —
+        # mount it under the plugin's API namespace.
+        for tt in manifest.get("tui", []) or []:
+            d: dict[str, Any] = dict(tt)
+            d["plugin"] = entry.name
+            ep = str(d.get("endpoint") or "tui").strip("/")
+            d["endpoint"] = f"/api/plugins/{entry.name}/{ep}"
+            if "order" not in d:
+                d["order"] = 100
+            ui_manifest["tui"].append(d)
     ui_manifest["tabs"].sort(key=lambda t: t.get("order", 100))
     ui_manifest["agent_tiles"].sort(key=lambda t: t.get("order", 100))
+    ui_manifest["tui"].sort(key=lambda t: t.get("order", 100))
 
     # Broad /static mount — registered AFTER plugin static dirs so that
     # `/static/plugins/<name>/<file>` requests reach the plugin-specific

@@ -4009,7 +4009,7 @@ def create_app(config_home: Path | None = None) -> FastAPI:
         """
         from relaydeck.plugin import get_registry
         raw = getattr(app.state, "ui_manifest",
-                      {"tabs": [], "header_chips": [], "agent_tiles": [], "widgets": []})
+                      {"tabs": [], "header_chips": [], "agent_tiles": [], "widgets": [], "tui": []})
         loaded = {e.name for e in get_registry().all()}
 
         def keep(item: dict) -> bool:
@@ -4024,6 +4024,8 @@ def create_app(config_home: Path | None = None) -> FastAPI:
             # `[plugin.ui] widgets`. Filtered like everything else so a
             # disabled plugin's widget drops out of the gallery.
             "widgets": [w for w in raw.get("widgets", []) if keep(w)],
+            # Terminal-TUI tabs (`relaydeck view`) from `[plugin.tui]`.
+            "tui": [t for t in raw.get("tui", []) if keep(t)],
         }
 
     # ── Activity feed ──────────────────────────────────────────

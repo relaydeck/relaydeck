@@ -8,6 +8,7 @@ the commands an orchestrator actually reaches for. `rdk` is an alias for
 | Command | What |
 | --- | --- |
 | `relaydeck --version` | Confirm it's installed |
+| `relaydeck open [path]` | **One-gesture on-ramp**: find-or-register the workspace owning `path` (cwd default), ensure the daemon, open the command center. `--web` opens the dashboard in a browser; `--no-view` just ensures workspace+daemon (scriptable, good for this skill) |
 | `relaydeck daemon start` / `stop` / `restart` / `status` | Daemon lifecycle |
 | `relaydeck daemon logs` | Tail the daemon log |
 | `relaydeck status` | Who you are, peers, unread inbox, **dashboard URL** |

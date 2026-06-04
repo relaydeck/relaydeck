@@ -418,10 +418,28 @@ def _build_app(
             padding: 0 1;
         }
         #msgs {
-            height: 7;
+            height: 1fr;
             background: #12111d;
-            border-top: solid #403a5d;
+            border: solid #403a5d;
             padding: 0 1;
+        }
+        #events {
+            height: 1fr;
+            background: #0d0c14;
+            border: solid #403a5d;
+            padding: 0 1;
+        }
+        #tasks {
+            height: 1fr;
+            background: #0f0e18;
+            border: solid #403a5d;
+            padding: 0 1;
+        }
+        #console {
+            height: 1;
+            background: #1a1830;
+            color: #c8beff;
+            padding: 0 2;
         }
         #status {
             height: 3;
@@ -461,6 +479,12 @@ def _build_app(
             self._compose_mode = False
             self._compose_buffer = ""
             self._refresh_pending = False
+            # Command-center: which content pane is showing, plus the
+            # console (CLI) command-line mode. The PTY pane is always
+            # MOUNTED — tabs toggle visibility only, never unmount it.
+            self._active_tab = "terminal"
+            self._console_mode = False
+            self._console_buffer = ""
 
         def compose(self):
             yield static_cls(self._render_topbar(), id="topbar")
@@ -480,10 +504,17 @@ def _build_app(
                         yield static_cls("", id="agent_stats")
                     yield rich_log_cls(id="pty", wrap=False, markup=False, highlight=False)
                     yield rich_log_cls(id="msgs", wrap=True, markup=True, highlight=False)
+                    yield rich_log_cls(id="events", wrap=True, markup=True,
+                                       highlight=False, max_lines=600)
+                    yield rich_log_cls(id="tasks", wrap=True, markup=True, highlight=False)
+            yield static_cls("", id="console")
             yield static_cls("", id="status")
 
         async def on_mount(self) -> None:
             await self._refresh_snapshot()
+            # Start on the Terminal tab (hides events/messages/tasks). This is
+            # display-toggling only — every pane, #pty included, stays mounted.
+            await self._set_tab("terminal")
             self._events_task = asyncio.create_task(self._event_driver())
             # Safety heartbeat only; the normal path is the daemon event stream.
             self.set_interval(30.0, self._refresh_snapshot)
@@ -578,6 +609,10 @@ def _build_app(
                             f"[yellow]event stream reconnecting:[/] {event.get('error', '')}"
                         )
                     continue
+                # Feed the Events tab: every real event becomes a line, so the
+                # operator sees the fleet's firehose (broadcasts, autopilot,
+                # status changes) without leaving the TUI.
+                self._append_event_line(typ, event)
                 if typ.startswith(("agent.", "workspace.", "worktree.", "worker.", "skills.")):
                     self._schedule_snapshot_refresh()
                 elif typ in {"usage.record", "model.invocation", "harness.assistant_message"}:
@@ -802,8 +837,9 @@ def _build_app(
 
         async def _render_agent_context(self) -> None:
             agent = next((a for a in self._agents if a.id == self._focused_agent), None)
+            self._render_tabbar()
+            self._render_tasks()
             if agent is None:
-                self.query_one("#tabbar", static_cls).update("[#7c8fdc]no agent selected[/]")
                 self.query_one("#avatar", static_cls).update("")
                 self.query_one("#agent_meta", static_cls).update(
                     "[b]No agent selected[/]\n"
@@ -814,10 +850,6 @@ def _build_app(
                     self.query_one("#status", static_cls).update(self._render_status(agent=None))
                 return
 
-            self.query_one("#tabbar", static_cls).update(
-                f"[#c8beff]focus[/] {agent.workspace}/{agent.id}"
-                "    [#56516f]+ tabs from plugins later: terminal · messages · events · tasks[/]"
-            )
             self.query_one("#avatar", static_cls).update(
                 "[#ff875f]   __\n"
                 "  / /\\\n"
@@ -893,9 +925,162 @@ def _build_app(
                 f"   [#56516f]model[/] [#9de1ff]{_truncate(str(model or '-'), 24)}[/]"
                 f"   [#56516f]workers[/] [#d5ff83]{len(workers)} running[/]"
                 + (f"   [red]{len(crashes)} crash-loop[/]" if crashes else "")
-                + "\n[#706a92]Ctrl+B D detach · Ctrl+B M message · "
-                "Ctrl+B ? help · terminal keys forward raw[/]"
+                + "\n[#706a92]^B 1-4 tabs · ^B C console · ^B M message · "
+                "^B D detach · ^B ? help · terminal keys forward raw[/]"
             )
+
+        # ── Command center: tabs, events feed, tasks, CLI console ─────
+
+        def _render_tabbar(self) -> None:
+            labels = [("terminal", "Terminal"), ("events", "Events"),
+                      ("messages", "Messages"), ("tasks", "Tasks")]
+            parts = []
+            for i, (key, label) in enumerate(labels, start=1):
+                style = ("b #11101b on #9f94dd" if key == self._active_tab
+                         else "#9f94dd")
+                parts.append(f"[{style}] {i} {label} [/]")
+            agent = next((a for a in self._agents if a.id == self._focused_agent), None)
+            focus = (f"  [#56516f]{agent.workspace}/{agent.id}[/]" if agent
+                     else "  [#56516f]no agent[/]")
+            try:
+                self.query_one("#tabbar", static_cls).update(
+                    "".join(parts) + focus + "   [#56516f]^B 1-4 · ^B C console[/]"
+                )
+            except Exception:
+                pass
+
+        def _render_tasks(self) -> None:
+            try:
+                log = self.query_one("#tasks", rich_log_cls)
+            except Exception:
+                return
+            log.clear()
+            log.write("[#7c8fdc]tasks[/] [dim]every agent + what it's doing right now[/]")
+            if not self._agents:
+                log.write("[dim]no agents — `relaydeck agent create <id> --type …`[/]")
+                return
+            for a in self._agents:
+                glyph, color = status_badge(a.semantic_status)
+                mark = "[#ff875f]▸[/]" if a.id == self._focused_agent else " "
+                purpose = _truncate(a.purpose or "", 56)
+                log.write(
+                    f"{mark} [{color}]{glyph}[/] [#c8beff]{a.id}[/] "
+                    f"[dim]{a.semantic_status or a.status or '?'}[/]"
+                    f"  [#9de1ff]{a.workspace}[/]  [dim]{purpose}[/]"
+                )
+
+        def _append_event_line(self, typ: str, event: dict) -> None:
+            try:
+                from rich.markup import escape
+                log = self.query_one("#events", rich_log_cls)
+            except Exception:
+                return
+            payload = event.get("payload") or event.get("data") or {}
+            aid = event.get("agent_id") or (
+                payload.get("agent_id") if isinstance(payload, dict) else ""
+            ) or ""
+            try:
+                import json as _json
+                ps = _json.dumps(payload, default=str) if payload else ""
+            except Exception:
+                ps = str(payload)
+            who = f"[#d5ff83]{escape(str(aid))}[/] " if aid else ""
+            # Escape dynamic parts: an event payload can contain '[' (e.g. a
+            # '[relay …]' marker) which would otherwise corrupt RichLog markup.
+            log.write(
+                f"{who}[#9de1ff]{escape(typ)}[/] [dim]{escape(_truncate(ps, 90))}[/]"
+            )
+
+        async def _set_tab(self, name: str) -> None:
+            """Switch the visible content pane. Display-toggle ONLY — every
+            pane (the PTY included) stays mounted, so the terminal is never
+            remounted and its WS/stream keep running underneath."""
+            panes = {"terminal": "#pty", "events": "#events",
+                     "messages": "#msgs", "tasks": "#tasks"}
+            if name not in panes:
+                return
+            self._active_tab = name
+            for tab, sel in panes.items():
+                try:
+                    self.query_one(sel).display = (tab == name)
+                except Exception:
+                    pass
+            self._render_tabbar()
+            if name == "tasks":
+                self._render_tasks()
+            elif name == "messages":
+                agent = next((a for a in self._agents if a.id == self._focused_agent), None)
+                if agent is not None:
+                    await self._render_messages(agent)
+            elif name == "terminal":
+                # The terminal had size 0 while hidden; after layout settles,
+                # re-forward geometry so the child redraws at the right size —
+                # exactly the path a window resize uses (no remount).
+                self.call_after_refresh(self._reforward_pty_size)
+
+        def _reforward_pty_size(self) -> None:
+            if (self._pty_task is None or self._pty_task.done()
+                    or self._pty_send_queue is None):
+                return
+            try:
+                log = self.query_one("#pty", rich_log_cls)
+                cols = max(40, log.size.width or 80)
+                rows = max(10, log.size.height or 24)
+                self._pty_send_queue.put_nowait(("resize", cols, rows))
+            except Exception:
+                pass
+
+        def _begin_console(self) -> None:
+            self._console_mode = True
+            self._console_buffer = ""
+            try:
+                self.query_one("#console", static_cls).update(
+                    "[#c8beff]relaydeck ❯[/] "
+                    "[dim](type a CLI subcommand · Enter run · Esc cancel)[/]"
+                )
+            except Exception:
+                pass
+
+        def _console_echo(self, markup: str) -> None:
+            try:
+                self.query_one("#events", rich_log_cls).write(markup)
+            except Exception:
+                pass
+
+        async def _run_console(self) -> None:
+            cmd = self._console_buffer.strip()
+            self._console_mode = False
+            self._console_buffer = ""
+            try:
+                self.query_one("#console", static_cls).update("")
+            except Exception:
+                pass
+            if not cmd:
+                return
+            import shlex
+            try:
+                args = shlex.split(cmd)
+            except ValueError as exc:
+                self._console_echo(f"[red]parse error:[/] {exc}")
+                return
+            await self._set_tab("events")
+            self._console_echo(f"[#c8beff]$ relaydeck {_truncate(cmd, 100)}[/]")
+            try:
+                import subprocess
+
+                from rich.text import Text
+                proc = await asyncio.to_thread(
+                    subprocess.run, ["relaydeck", *args],
+                    capture_output=True, text=True, timeout=60,
+                )
+                out = (proc.stdout or "") + (proc.stderr or "")
+                log = self.query_one("#events", rich_log_cls)
+                for line in out.splitlines()[:200]:
+                    log.write(Text(line))   # raw — bypass markup parsing
+                if proc.returncode != 0:
+                    self._console_echo(f"[yellow]· exit {proc.returncode}[/]")
+            except Exception as exc:
+                self._console_echo(f"[red]command failed:[/] {exc}")
 
         async def _stream_pty(self, agent_id: str) -> None:
             """Live WS-attached PTY for the focused agent. The
@@ -1003,12 +1188,20 @@ def _build_app(
                     self._begin_compose()
                 elif key in ("s", "S"):
                     await self._start_focused_agent()
+                elif key in ("1", "2", "3", "4"):
+                    await self._set_tab(
+                        {"1": "terminal", "2": "events",
+                         "3": "messages", "4": "tasks"}[key]
+                    )
+                elif key in ("c", "C"):
+                    self._begin_console()
                 elif key in ("?", "f1"):
                     self.action_help()
                 elif key == "ctrl+b":
                     self._detach_prefix = "prefix"
                     self.query_one("#status", static_cls).update(
-                        "Ctrl+B armed — D detach, M message, S start, R refresh, ? help"
+                        "Ctrl+B armed — 1-4 tabs, C console, M message, S start, "
+                    "R refresh, D detach, ? help"
                     )
                 event.stop()
                 return
@@ -1034,10 +1227,32 @@ def _build_app(
                 event.stop()
                 return
 
+            if self._console_mode:
+                character = getattr(event, "character", None)
+                if key in ("escape", "ctrl+c"):
+                    self._console_mode = False
+                    self._console_buffer = ""
+                    self.query_one("#console", static_cls).update("")
+                elif key in ("enter", "return"):
+                    await self._run_console()
+                elif key == "backspace":
+                    self._console_buffer = self._console_buffer[:-1]
+                    self.query_one("#console", static_cls).update(
+                        "[#c8beff]relaydeck ❯[/] " + _truncate(self._console_buffer, 120)
+                    )
+                elif character and len(character) == 1 and character.isprintable():
+                    self._console_buffer += character
+                    self.query_one("#console", static_cls).update(
+                        "[#c8beff]relaydeck ❯[/] " + _truncate(self._console_buffer, 120)
+                    )
+                event.stop()
+                return
+
             if key == "ctrl+b":
                 self._detach_prefix = "prefix"
                 self.query_one("#status", static_cls).update(
-                    "Ctrl+B armed — D detach, M message, S start, R refresh, ? help"
+                    "Ctrl+B armed — 1-4 tabs, C console, M message, S start, "
+                    "R refresh, D detach, ? help"
                 )
                 event.stop()
                 return
@@ -1055,6 +1270,11 @@ def _build_app(
         async def on_resize(self, event: Any) -> None:  # type: ignore[override]
             """Forward textual's resize to the daemon so the
             harness's child sees a real SIGWINCH and redraws."""
+            # Only when the Terminal tab is showing: a hidden #pty has size 0,
+            # and forwarding that would shrink the harness to a bogus geometry.
+            # Switching back to the Terminal tab re-forwards the real size.
+            if self._active_tab != "terminal":
+                return
             if self._pty_task is None or self._pty_task.done():
                 return
             try:

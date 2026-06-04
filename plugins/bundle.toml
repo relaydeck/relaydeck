@@ -21,7 +21,7 @@ plugins = [
   # Extensions
   "messaging", "skills", "theme", "metering", "telegram",
   "gateway", "file-watcher", "usage-limits", "hitl", "prompts", "autopilot",
-  "context-watch", "dashboard",
+  "context-watch", "manager", "dashboard",
   # Provider catalogs
   "openai", "anthropic", "ollama", "openrouter",
 ]

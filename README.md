@@ -82,8 +82,9 @@ SQLite db, and secrets stay in a vault on the daemon host.
 | **Local-first** | State in `~/.relaydeck` + SQLite; secrets in the on-host vault |
 | **Fleet-aware** | Agents discover peers by `purpose`/`tags`; durable peer messaging with late drain |
 | **Observable** | Live PTY terminals, semantic status, usage metering, SSE; no polling |
-| **CLI = API = UI** | Every operation works from the shell, the HTTP API, and the dashboard |
-| **Plugin-extensible** | Harnesses, providers, messaging, skills, automations: all plugins |
+| **CLI-first, full parity** | The CLI is the platform — every operation works from the shell; the HTTP API and both UIs are peers over the same daemon |
+| **Web is a UI plugin** | The dashboard ships as the platform-level `dashboard` plugin; the built-in `relaydeck view` TUI needs no browser |
+| **Plugin-extensible** | Harnesses, providers, messaging, skills, automations, *and the web UI itself*: all plugins |
 
 ---
 
@@ -112,20 +113,53 @@ xAI, Mistral, vLLM, and more). Keys live in the vault, never in agent configs.
 
 ---
 
-## The dashboard
+## Three first-class surfaces — CLI, TUI, web
 
-The web dashboard at `http://127.0.0.1:8765` is the primary UI: a fleet home with
-live usage and worker pulse, plus a per-agent lens that shows the live PTY
-terminal, real-time usage and cost tiles, and panels for identity, context,
-events, config, inbox, and compose. Agents see their peers through an auto
-identity preamble and message each other durably; incoming messages are pushed
-straight into the prompt.
+relaydeck is **CLI-first**: the shell is the platform, and everything runs
+against one local daemon. The two UIs are peers over the same HTTP/SSE API, not
+a privileged layer — pick whichever fits.
+
+| Surface | Command | When |
+|---------|---------|------|
+| **CLI** | `relaydeck …` (`rdk` alias) | The platform. Scripts, CI, agents, automation — full parity, nothing UI-only |
+| **TUI command center** | `relaydeck view` | One terminal, no browser: workspaces sidebar, focused-agent PTY, Events/Messages/Tasks tabs + plugin tabs + a CLI console |
+| **Web dashboard** | `open http://127.0.0.1:8765` | A rich browser UI — and itself the platform-level **`dashboard` plugin** (disable or replace it like any other) |
+
+```
+relaydeck view              # built-in TUI command center (no deps)
+```
+
+```
+┌ relaydeck ───────────────────────────── ws: api · agent: reviewer ─┐
+│ workspaces        │ 1 Terminal  2 Events  3 Messages  4 Tasks  ·C  │
+│ ▸ api    3 agents │ reviewer  $ pytest -q ......... [ working ]    │
+│   web    1 agent  │ 41 passed in 2.10s                             │
+│ agents            │ › builder is applying the diff reviewer filed  │
+│  ● reviewer  work │ ────────────────────────────────────────────  │
+│  ▲ builder   82%  │ events ▸ agent.context builder 82% (warn)      │
+│  ⏸ tester    idle │         ▸ manager.action builder → compact     │
+│ ^B 1-4 tabs · ^B C console · ^B M message · ^B D detach            │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+The web dashboard is a fleet home with live usage and worker pulse, plus a
+per-agent lens (live PTY terminal, usage/cost tiles, and panels for identity,
+context, events, config, inbox, compose). Both UIs read the same SSE stream the
+CLI's `events tail -f` does — no polling, no privileged path.
 
 ---
 
 ## Quickstart
 
 Requirements: Python 3.12+ and at least one harness CLI on your `$PATH`.
+
+```sh
+# One gesture: find-or-register this dir as a workspace, ensure the daemon,
+# open the command center (TUI; --web opens the dashboard, --no-view for scripts).
+relaydeck open .
+```
+
+…or do it step by step:
 
 ```sh
 # Register this project as a workspace with messaging enabled.
@@ -152,6 +186,22 @@ open http://127.0.0.1:8765  # web dashboard (primary UI)
 
 `relaydeck --help` documents every command. With the daemon running, the OpenAPI
 docs live at `http://127.0.0.1:8765/docs`.
+
+### Drive it from your agent — the `relaydeck` skill
+
+relaydeck ships a publishable **agent skill** (named `relaydeck`) that teaches
+any SKILL.md-capable harness (Claude Code, …) to install and drive the fleet.
+Arm your local agent with one command, then just ask it to "review this repo
+with three agents in parallel":
+
+```sh
+relaydeck skills install            # → ~/.claude/skills/relaydeck
+relaydeck skills install --target both   # Claude + Codex skill roots
+```
+
+The skill is self-aware (it won't bootstrap a fleet-of-fleets from inside one)
+and finds an existing relaydeck install. See **[skills/relaydeck/](skills/relaydeck/)**
+and the **[CLI usage guide](docs/USAGE.md)**.
 
 ---
 

@@ -1,11 +1,15 @@
 # Notes for AI coding agents on this repo
 
 relaydeck is a **micro-agent orchestrator & workflow engine** —
-**web-primary**, plugin-extensible, with a fully scriptable CLI at parity.
-One daemon per machine, web dashboard at `localhost:8765` (the primary operator
-surface), a fleet of CLI-harness-wrapping agents per registered workspace,
-durable agent-to-agent messaging, and a meta layer (`purpose`/`tags`) that lets
-agents discover and delegate to each other.
+**CLI-first**, plugin-extensible, with co-equal first-class web + TUI surfaces
+(the web dashboard is itself a plugin). One daemon per machine; the CLI is the
+platform and scriptable reference, while the web dashboard (the `dashboard`
+plugin) at `localhost:8765` and the built-in `relaydeck view` TUI are
+first-class peers over the same daemon HTTP/SSE API. A fleet of
+CLI-harness-wrapping agents per registered workspace, durable agent-to-agent
+messaging, and a meta layer (`purpose`/`tags`) that lets agents discover and
+delegate to each other. A publishable **`relaydeck` agent skill**
+(`skills/relaydeck/`) teaches an external agent to install + drive all of this.
 
 **Tests:** `uv run pytest -q` (full suite green; `-m "not e2e"` in CI). Use
 `uv run relaydeck …` in dev — a bare `relaydeck` may be a frozen tool copy that
@@ -34,13 +38,17 @@ ignores repo edits.
 - **Workspace plugin source-of-truth is `agent.toml`, not `config.toml`.** The
   harness reads `workspaces/<ws>/agent.toml` at spawn; `load_workspace_registry()`
   prefers it, falling back to `config.toml` for legacy workspaces only.
-- **The web dashboard is THE primary interface; the CLI is at parity, not
-  ahead.** Anything doable from the CLI MUST be doable from the dashboard, both
-  calling the same daemon HTTP API. **Never ship a web view that punts the
-  mutation to the CLI** — no "use `relaydeck X`" empty-state where a form
-  belongs. A new capability ships with its web affordance in the same change.
-  The only legit CLI/TTY-only ops are inherently local-process (`daemon
-  start/stop`, `serve`, `attach`, `view`, `workspace view`, `layout`).
+- **CLI, web, and TUI are co-equal first-class surfaces over one daemon API;
+  the web dashboard is itself a platform-level plugin (`dashboard`).** The CLI
+  is the platform and the scriptable reference. **Parity is mutual:** anything
+  doable from the CLI MUST be doable from the dashboard, and no daemon
+  capability ships without a CLI command — both call the same HTTP API. **Never
+  ship a web view that punts the mutation to the CLI** — no "use `relaydeck X`"
+  empty-state where a form belongs; equally, never add an API capability the
+  CLI can't reach. A new capability ships with **both** its CLI command and its
+  web affordance in the same change. The only legit surface-specific ops are
+  inherently local-process (`daemon start/stop`, `serve`, `attach`, `view`,
+  `workspace view`, `layout`).
   **Destructive/interrupting web actions must be responsible**: surface
   consequences + require confirmation (e.g. the daemon-restart confirm modal).
 - **CLI ↔ daemon over HTTP, never via local orchestrator.** Live state (PTY
@@ -537,12 +545,16 @@ placeholder + log a warning.
 ## CLI
 
 `relaydeck --help` documents every command, and `http://127.0.0.1:8765/docs` has
-the OpenAPI. The command groups: `daemon`/`serve`, `status`/`doctor`,
-`agent`, `workspace`, `reply`, `attach`/`view`/`chat`, `preset`/`defaults`/
-`vault`/`usage`, `plugin`/`integration`, `github`, `external`, `worktree`,
-`skills`, `theme`/`layout`, `workers`/`automation`, `db` (danger zone). The CLI
-is the scriptable path and the reference for *what* an op does; the dashboard is
-at parity for everything except inherently-local-process ops.
+the OpenAPI. The command groups: `open` (context-aware on-ramp), `daemon`/`serve`,
+`status`/`doctor`, `agent` (incl. `result`/`compact`/`escalate`/`transcript`/
+`unblock`), `workspace`, `events`/`broadcast`, `reply`, `attach`/`view`/`chat`,
+`preset`/`defaults`/`vault`/`usage`, `plugin`/`integration`, `github`,
+`external`, `worktree`, `skills` (incl. `install` for the bundled `relaydeck`
+skill), `theme`/`layout`, `workers`/`automation`, `db` (danger zone). The CLI is
+the platform — the scriptable path and the reference for *what* an op does; the
+web dashboard (the `dashboard` plugin) and the `view` TUI are co-equal first-class
+peers, at full parity except for inherently-local-process ops. A full,
+example-driven walkthrough lives in **[docs/USAGE.md](docs/USAGE.md)**.
 
 ## Chat-block format (peer messages)
 

@@ -58,6 +58,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["relaydeck", "plugins"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"skills/relaydeck-orchestrate" = "relaydeck/bundled_skills/relaydeck-orchestrate"
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import queue
 import sqlite3
 import threading
@@ -747,6 +748,9 @@ class Orchestrator:
                         "agent_id": agent_id, "type": spec.type, "error": str(exc),
                     })
                 finally:
+                    # Snapshot the last screen BEFORE tearing the instance
+                    # down, so a crashed agent's output is recoverable (opt-in).
+                    self._persist_transcript(agent_id, agent)
                     with self._lock:
                         self._running.pop(agent_id, None)
                         self._instances.pop(agent_id, None)
@@ -944,6 +948,45 @@ class Orchestrator:
         if ok:
             self.emit_event(agent_id, "agent.compacted", {"command": cmd})
         return {"ok": ok, "reason": "sent" if ok else "send-failed", "command": cmd}
+
+    def _transcript_path(self, agent_id: str) -> Path:
+        return self.config_home / "runtime" / "transcripts" / f"{agent_id}.txt"
+
+    def _persist_transcript(self, agent_id: str, agent: BaseAgent) -> None:
+        """Snapshot the tail of an exiting agent's PTY buffer to disk so its
+        last screen survives the process — the recovery companion to
+        `agent result` for crashes. Opt-in + bounded via the
+        `RELAYDECK_TRANSCRIPT_BYTES` env var (0 / unset = off). Best-effort:
+        never let a snapshot failure affect teardown, and only a READ of the
+        existing buffer (never touches the PTY loop)."""
+        try:
+            limit = int(os.environ.get("RELAYDECK_TRANSCRIPT_BYTES", "0") or 0)
+        except ValueError:
+            limit = 0
+        if limit <= 0:
+            return
+        getter = getattr(agent, "get_pty_buffer", None)
+        if not callable(getter):
+            return
+        try:
+            buf = bytes(getter() or b"")
+            if not buf:
+                return
+            text = buf[-limit:].decode("utf-8", "replace")
+            path = self._transcript_path(agent_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        except Exception:
+            logger.debug("persist transcript failed for %s", agent_id, exc_info=True)
+
+    def get_transcript(self, agent_id: str) -> str | None:
+        """Return the persisted last-screen transcript for an exited agent, or
+        None if none was captured (feature off, or agent never ran/exited)."""
+        try:
+            path = self._transcript_path(agent_id)
+            return path.read_text() if path.is_file() else None
+        except Exception:
+            return None
 
     def restart_agent(self, agent_id: str, *, session: str | None = "resume") -> None:
         """Restart an agent's PTY (stop + start), keeping its conversation by

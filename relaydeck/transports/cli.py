@@ -2735,6 +2735,29 @@ def agent_compact(agent_id: str):
     raise SystemExit(1)
 
 
+@agent.command("transcript")
+@click.argument("agent_id")
+def agent_transcript(agent_id: str):
+    """Show an exited agent's persisted last screen (crash recovery).
+
+    The companion to `agent result` for when a worker died before handing
+    anything back. Opt-in: set [bold]RELAYDECK_TRANSCRIPT_BYTES[/] (>0) so the
+    daemon snapshots the PTY tail on every agent exit.
+    """
+    outcome, resp = _get_from_daemon(f"/api/agents/{agent_id}/transcript")
+    if outcome == _POST_OK and isinstance(resp, dict):
+        console.print(resp.get("transcript", ""), highlight=False, markup=False)
+        return
+    if outcome == _POST_DAEMON_ERROR:
+        console.print(f"[yellow]·[/] {resp}")
+        return
+    console.print(
+        f"[red]✗[/] daemon unreachable ({resp}). "
+        "Start it with [bold]relaydeck daemon start[/]."
+    )
+    raise SystemExit(1)
+
+
 # ── Agent results: durable structured hand-back ──────────────────────
 
 

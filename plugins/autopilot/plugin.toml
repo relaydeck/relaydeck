@@ -1,7 +1,7 @@
 [plugin]
 name = "autopilot"
 version = "0.1.0"
-description = "Auto-answer benign native prompts (trust-this-folder, press-enter-to-continue, accept-defaults) so an UNATTENDED fleet never stalls on a harness blocking-prompt. Detection is the semantic engine's; autopilot adds the answer side. Composes with `hitl`, which still escalates anything autopilot won't touch."
+description = "Auto-answer benign native prompts (trust-this-folder, press-enter-to-continue, defer updates in all-known mode) so an UNATTENDED fleet never stalls on a harness blocking-prompt. Detection is the semantic engine's; autopilot adds the answer side. Composes with `hitl`, which still escalates anything autopilot won't touch."
 author = "relaydeck"
 license = "MIT"
 category = "infrastructure"
@@ -33,7 +33,7 @@ tabs = [
 ]
 
 [plugin.settings]
-mode = { type = "enum", default = "benign", options = ["off", "benign", "all-known"], description = "off = never auto-answer (detection-only). benign = only the always-safe prompts (press-enter-to-continue, trust-this-workspace). all-known = also accept harness [Y/n] defaults and defer update prompts." }
+mode = { type = "enum", default = "benign", options = ["off", "benign", "all-known"], description = "off = never auto-answer (detection-only). benign = only the always-safe prompts (press-enter-to-continue, trust-this-workspace). all-known = also defer update prompts; generic [Y/n] defaults are held for a human because prompt defaults can be destructive." }
 auto_accept_terms = { type = "bool", default = false, description = "In all-known mode, also auto-accept terms/license/EULA prompts. Off by default — accepting an agreement carries legal weight; turn on only when you've vetted what your harnesses prompt for." }
 cooldown_seconds = { type = "number", default = 20, description = "Per-agent: don't re-attempt an unblock within this window (stops a misfiring rule from hammering the PTY)." }
 max_attempts = { type = "number", default = 3, description = "Per awaiting-input episode: give up after this many auto-answers (the counter resets when the agent leaves awaiting-input). A prompt that survives N answers needs a human." }

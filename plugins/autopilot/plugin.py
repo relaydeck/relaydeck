@@ -21,7 +21,7 @@ Safety posture:
     "what would fire" logic is unit-tested without a daemon, and
     `relaydeck autopilot test` lets an operator dry-run it.
   - Rules are tiered. `benign` (default) is only the always-safe prompts.
-    `all-known` adds accept-the-default `[Y/n]` and update-deferral.
+    `all-known` adds update-deferral.
     Terms/license prompts are gated behind a *separate* explicit flag.
   - Anything NOT matched is left untouched and surfaced as
     `autopilot.held` — autopilot never guesses at an unknown prompt. The

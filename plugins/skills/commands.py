@@ -13,6 +13,7 @@ up a newly-linked skill on next start).
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 _ALIAS_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -24,6 +25,24 @@ def _sanitize_alias(alias: str) -> str:
             f"invalid alias {alias!r}: use letters/digits/._- only (no path separators)"
         )
     return alias
+
+
+def _bundled_orchestrate_skill_dir() -> Path:
+    """Return the bundled relaydeck-orchestrate skill source.
+
+    In a built wheel it is force-included under `relaydeck/bundled_skills`.
+    In a source checkout it lives at the repository root under `skills/`.
+    """
+    import relaydeck
+
+    packaged = (
+        Path(relaydeck.__file__).resolve().parent
+        / "bundled_skills"
+        / "relaydeck-orchestrate"
+    )
+    if packaged.is_dir():
+        return packaged
+    return Path(__file__).resolve().parents[2] / "skills" / "relaydeck-orchestrate"
 
 
 def register(plugin) -> None:
@@ -142,6 +161,45 @@ def register(plugin) -> None:
                 h.get("import_hint") or "-",
             )
         console.print(table)
+
+    @host.cli.command(
+        "install-orchestrator",
+        help="Install the bundled relaydeck-orchestrate skill for external agents.",
+    )
+    @click.option("--target", type=click.Choice(["claude", "codex", "both"]),
+                  default="claude", show_default=True,
+                  help="User skill root to install into.")
+    @click.option("--force", is_flag=True,
+                  help="Replace an existing relaydeck-orchestrate install.")
+    def _install_orchestrator(target, force):
+        src = _bundled_orchestrate_skill_dir()
+        ok, errors, _warnings = _skills.validate_skill_dir(src)
+        if not ok:
+            console.print(f"[red]✗[/] bundled orchestrator skill is invalid: {errors}")
+            raise SystemExit(1)
+
+        targets = []
+        if target in ("claude", "both"):
+            targets.append(("claude", _skills.claude_skills_root()))
+        if target in ("codex", "both"):
+            targets.append(("codex", _skills.codex_skills_root()))
+
+        for label, root in targets:
+            dest = root / "relaydeck-orchestrate"
+            if dest.exists():
+                if not force:
+                    console.print(
+                        f"[yellow]·[/] {label}: {dest} already exists "
+                        "(pass --force to replace)"
+                    )
+                    continue
+                if dest.is_symlink() or dest.is_file():
+                    dest.unlink()
+                else:
+                    shutil.rmtree(dest)
+            root.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, dest)
+            console.print(f"[green]✓[/] installed {label} skill → {dest}")
 
     @host.cli.command("link", help="Import an external skill into a workspace (symlink/copy/reference).")
     @click.argument("target_path")

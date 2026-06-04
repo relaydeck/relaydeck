@@ -28,7 +28,13 @@ relaydeck-orchestrate/
 
 ## Install (for an end user)
 
-**Claude Code** — copy the folder into a skills directory:
+**Claude Code** — with relaydeck installed, use the built-in installer:
+
+```sh
+relaydeck skills install-orchestrator
+```
+
+Or copy the folder into a skills directory manually:
 
 ```sh
 # Personal (all projects):
@@ -102,11 +108,10 @@ The flywheel:
       dashboard) as the hero.
 - [ ] Ship a 60-second "zero to fleet" screencast: copy folder → "review
       this repo with three agents" → dashboard lights up.
-- [ ] Optionally ship the bundle *inside* the `relaydeck` package plus a
-      `relaydeck skill install-orchestrator` command that copies it into
-      `~/.claude/skills` — so an existing relaydeck user can arm their local
-      agent with one command. (Tracked as a follow-up; this bundle is the
-      canonical source.)
+- [x] Ship the bundle *inside* the `relaydeck` package plus a
+      `relaydeck skills install-orchestrator` command that copies it into
+      `~/.claude/skills` or `~/.codex/skills` — so an existing relaydeck user
+      can arm their local agent with one command.
 - [ ] Keep `SKILL.md` lean and the `reference/` deep — agents load the
       former always, the latter on demand.
 

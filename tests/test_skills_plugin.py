@@ -10,18 +10,20 @@ booting the whole daemon.
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
+import click
 import pytest
+from click.testing import CliRunner
 
+from plugins.skills import commands, manager
+from plugins.skills.plugin import SkillsPlugin
 from relaydeck import skills as relaydeck_skills
 from relaydeck import skills_cache
 from relaydeck.db import open_db, record_usage
 from relaydeck.plugin_manifest import load_manifest
-from plugins.skills import manager
-from plugins.skills.plugin import SkillsPlugin
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -294,6 +296,35 @@ def test_read_skill_metadata_reports_footprint(tmp_path):
     assert meta["valid"] is True
     assert meta["token_estimate"] > 0
     assert meta["name"] == "sample-skill"
+
+
+def test_install_orchestrator_skill_copies_to_user_roots(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+
+    group = click.Group("skills")
+    plugin = SimpleNamespace(
+        host=SimpleNamespace(cli=group),
+        config_home=tmp_path / ".relaydeck",
+        db_path=str(tmp_path / ".relaydeck" / "runtime" / "relaydeck.db"),
+        _include_codex=lambda: False,
+        _include_claude=lambda: False,
+    )
+    commands.register(plugin)
+
+    result = CliRunner().invoke(group, ["install-orchestrator", "--target", "both"])
+    assert result.exit_code == 0, result.output
+
+    for root in (tmp_path / "claude" / "skills", tmp_path / "codex" / "skills"):
+        dest = root / "relaydeck-orchestrate"
+        assert (dest / "SKILL.md").is_file()
+        assert (dest / "scripts" / "relaydeck-bootstrap.sh").is_file()
+        valid, errors, _warnings = relaydeck_skills.validate_skill_dir(dest)
+        assert valid, errors
+
+    again = CliRunner().invoke(group, ["install-orchestrator", "--target", "codex"])
+    assert again.exit_code == 0, again.output
+    assert "already exists" in again.output
 
 
 def test_inventory_overview_counts_active_tokens_and_agents(tmp_path):

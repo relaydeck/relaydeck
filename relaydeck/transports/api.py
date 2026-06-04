@@ -2104,6 +2104,20 @@ def create_app(config_home: Path | None = None) -> FastAPI:
             )
         return {"agent_id": agent_id, **result}
 
+    @app.get("/api/agents/{agent_id}/transcript")
+    async def get_agent_transcript(agent_id: str):
+        """The persisted last-screen transcript of an exited agent (recovery
+        companion to `agent result`). 404 when none was captured — the feature
+        is opt-in via RELAYDECK_TRANSCRIPT_BYTES, and only exited agents have
+        one."""
+        text = await asyncio.to_thread(orch.get_transcript, agent_id)
+        if text is None:
+            raise HTTPException(
+                404, f"no persisted transcript for {agent_id} "
+                "(set RELAYDECK_TRANSCRIPT_BYTES>0 to capture on exit)",
+            )
+        return {"agent_id": agent_id, "transcript": text}
+
     @app.get("/api/agents/{agent_id}/result")
     async def get_agent_result(
         agent_id: str,

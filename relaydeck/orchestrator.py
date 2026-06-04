@@ -1191,6 +1191,34 @@ class Orchestrator:
     def unsubscribe_events(self, agent_id: str, q: queue.Queue) -> None:
         _bus.unsubscribe(agent_id, q)
 
+    def emit_event(
+        self, agent_id: str, event_type: str, payload: dict | None = None
+    ) -> int:
+        """Persist a custom event and publish it on the live bus.
+
+        The operator-facing twin of `BaseAgent.emit`: writes one row to the
+        `events` table (so `agent events` + history replay see it) and fans
+        it out to SSE subscribers via `_bus` — both the per-`agent_id`
+        stream and the `"*"` broadcast stream the dashboard and `view` TUI
+        watch. Backs `POST /api/events/emit` so `relaydeck broadcast` /
+        `relaydeck events emit` land on the exact stream agents already
+        produce. `agent_id` is just the emitter label (the API defaults it
+        to `"operator"`); it need not be a registered agent — a session row
+        is ensured so the FK holds either way.
+        """
+        from relaydeck.db import ensure_session, log_event
+        conn = open_db(self.db_path)
+        try:
+            ensure_session(conn, agent_id)
+            ev_id = log_event(conn, agent_id, event_type, payload or {}, agent_id=agent_id)
+        finally:
+            conn.close()
+        try:
+            _bus.publish(agent_id, event_type, payload or {}, ev_id)
+        except Exception:
+            pass
+        return ev_id
+
     # ── Agent-to-agent messaging ────────────────────────────────
 
     def send_message_to(

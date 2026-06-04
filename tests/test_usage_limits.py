@@ -582,3 +582,57 @@ def test_plugin_manifest_present_and_valid():
     assert "agents.stop" in caps
     assert "events.subscribe" in caps
     assert "events.emit" in caps
+
+
+# ── Provider-account-wide roll-up ──────────────────────────────────
+
+
+def test_provider_rollup_sums_across_agents(plugin_ctx, monkeypatch):
+    """The account-wide window sums usage across EVERY agent on the
+    provider, not just one — the shared 5h/weekly cap."""
+    ctx, _, _, db_path = plugin_ctx
+    plugin = _legacy_on_load(ctx)
+    _seed_usage(db_path, "alice", 600)
+    _seed_usage(db_path, "bob", 700)  # same provider "test-provider"
+
+    base = plugin._settings()
+    monkeypatch.setattr(
+        plugin, "_settings",
+        lambda: {**base, "provider_session_token_budget": 1000},
+    )
+    pstate = plugin.provider_state_for("test-provider")
+    assert pstate["session"].used_tokens == 1300
+    assert pstate["session"].state == "exceeded"
+
+
+def test_provider_exceeded_event_emitted(plugin_ctx, monkeypatch):
+    ctx, _, bus, db_path = plugin_ctx
+    plugin = _legacy_on_load(ctx)
+    base = plugin._settings()
+    monkeypatch.setattr(
+        plugin, "_settings",
+        lambda: {**base, "provider_session_token_budget": 500},
+    )
+    seen = []
+    bus.subscribe("usage_limits.provider_exceeded", lambda e: seen.append(e))
+
+    _seed_usage(db_path, "alice", 600)        # already over the 500 cap
+    _emit_usage(bus, agent_id="alice", tokens=600)  # fires the handler
+
+    assert len(seen) == 1
+    assert seen[0].data["provider"] == "test-provider"
+    assert seen[0].data["window"] == "session"
+    assert seen[0].data["state"] == "exceeded"
+
+
+def test_no_provider_event_without_budget(plugin_ctx):
+    """Default (no provider budget) emits nothing provider-scoped — the
+    feature is opt-in, no behaviour change for existing deployments."""
+    ctx, _, bus, db_path = plugin_ctx
+    _legacy_on_load(ctx)
+    seen = []
+    bus.subscribe("usage_limits.provider_threshold", lambda e: seen.append(e))
+    bus.subscribe("usage_limits.provider_exceeded", lambda e: seen.append(e))
+    _seed_usage(db_path, "alice", 999999)
+    _emit_usage(bus, agent_id="alice", tokens=999999)
+    assert seen == []

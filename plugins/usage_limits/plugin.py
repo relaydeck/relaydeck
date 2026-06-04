@@ -57,6 +57,11 @@ _DEFAULTS: dict[str, Any] = {
     "weekly_token_budget": 0,
     "warn_threshold_pct": 75.0,
     "pause_at_limit": False,
+    # Provider-ACCOUNT-wide budgets (summed across every agent on that
+    # provider/key) — the shared 5h/weekly cap, not the per-agent one.
+    # 0 = unlimited (default off, so no behaviour change unless configured).
+    "provider_session_token_budget": 0,
+    "provider_weekly_token_budget": 0,
 }
 
 
@@ -78,6 +83,26 @@ def _load_usage_records(
             "SELECT ts, total_tokens FROM usage_records "
             "WHERE agent_id = ? AND ts >= ? ORDER BY ts",
             (agent_id, since_ts),
+        ).fetchall()
+        return [(float(r[0]), int(r[1] or 0)) for r in rows]
+    finally:
+        conn.close()
+
+
+def _load_provider_usage(
+    db_path: str, *, provider: str, since_ts: float
+) -> list[tuple[float, int]]:
+    """Return (ts, total_tokens) rows for ALL agents on `provider` since
+    `since_ts` — the account-wide roll-up. Index `usage_model_idx`
+    (model, provider, ts) covers the provider/ts filter."""
+    from relaydeck.db import open_db
+
+    conn = open_db(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT ts, total_tokens FROM usage_records "
+            "WHERE provider = ? AND ts >= ? ORDER BY ts",
+            (provider, since_ts),
         ).fetchall()
         return [(float(r[0]), int(r[1] or 0)) for r in rows]
     finally:
@@ -116,6 +141,8 @@ class UsageLimitsPlugin(Plugin):
         # incoming usage record once a window is already in `warn` or
         # `exceeded`. Map: (agent_id, window_name) → last emitted state.
         self._last_state: dict[tuple[str, str], str] = {}
+        # Same suppression for provider-account-wide windows.
+        self._last_provider_state: dict[tuple[str, str], str] = {}
 
         host.events.subscribe("usage.record", self._on_usage_event)
         self._register_cli(host)
@@ -168,6 +195,8 @@ class UsageLimitsPlugin(Plugin):
             "warn_threshold_pct": float(vals.get("warn_threshold_pct") or 75.0),
             "pause_at_limit": str(vals.get("pause_at_limit") or "").lower()
                               in ("1", "true", "yes", "on"),
+            "provider_session_token_budget": int(vals.get("provider_session_token_budget") or 0),
+            "provider_weekly_token_budget": int(vals.get("provider_weekly_token_budget") or 0),
         }
 
     def _agent_window_configs(self, agent_id: str) -> tuple[WindowConfig, WindowConfig]:
@@ -264,6 +293,71 @@ class UsageLimitsPlugin(Plugin):
         settings = self._settings()
         for window_name, state in windows.items():
             self._maybe_emit_threshold(agent_id, window_name, state, settings)
+
+        # Provider-account-wide roll-up (only when a provider budget is set).
+        provider = str(data.get("provider") or "")
+        if provider and (settings["provider_session_token_budget"] > 0
+                         or settings["provider_weekly_token_budget"] > 0):
+            try:
+                pwindows = self.provider_state_for(provider)
+            except Exception:
+                logger.exception("usage_limits: provider_state_for failed for %s", provider)
+                pwindows = {}
+            for window_name, state in pwindows.items():
+                self._maybe_emit_provider(provider, window_name, state)
+
+    def provider_state_for(self, provider: str, *, now_ts: float | None = None
+                           ) -> dict[str, WindowState]:
+        """Account-wide window state for one provider — usage summed across
+        EVERY agent on that provider/key, vs the provider budget. The shared
+        5h/weekly cap a fleet blows through collectively."""
+        s = self._settings()
+        now = now_ts if now_ts is not None else time.time()
+        session_cfg = WindowConfig(
+            name="session", duration_hours=s["session_window_hours"],
+            budget_tokens=s["provider_session_token_budget"],
+        )
+        weekly_cfg = WindowConfig(
+            name="weekly", duration_hours=s["weekly_window_hours"],
+            budget_tokens=s["provider_weekly_token_budget"],
+        )
+        lookback = max(session_cfg.duration_hours, weekly_cfg.duration_hours) * 3600.0
+        records = _load_provider_usage(
+            self.db_path, provider=provider, since_ts=now - lookback,
+        )
+        thresh = s["warn_threshold_pct"]
+        return {
+            "session": compute_window_state(
+                config=session_cfg, records=records, now_ts=now,
+                warn_threshold_pct=thresh,
+            ),
+            "weekly": compute_window_state(
+                config=weekly_cfg, records=records, now_ts=now,
+                warn_threshold_pct=thresh,
+            ),
+        }
+
+    def _maybe_emit_provider(self, provider: str, window_name: str,
+                             state: WindowState) -> None:
+        if state.is_disabled():
+            return
+        key = (provider, window_name)
+        if self._last_provider_state.get(key) == state.state:
+            return
+        self._last_provider_state[key] = state.state
+        payload = {
+            "provider": provider,
+            "window": window_name,
+            "state": state.state,
+            "pct_used": state.pct_used,
+            "used_tokens": state.used_tokens,
+            "budget_tokens": state.budget_tokens,
+            "reset_at_ts": state.reset_at_ts,
+        }
+        if state.state == "warn":
+            self.host.events.emit("usage_limits.provider_threshold", payload)
+        elif state.state == "exceeded":
+            self.host.events.emit("usage_limits.provider_exceeded", payload)
 
     def _maybe_emit_threshold(
         self,
@@ -403,6 +497,35 @@ class UsageLimitsPlugin(Plugin):
                     "windows": {n: _state_to_dict(s) for n, s in windows.items()},
                 })
             return {"agents": out}
+
+        @host.api.route("/providers", ["GET"])
+        async def get_provider_state():
+            """Account-wide window state per provider (usage summed across all
+            agents). Surfaces the shared 5h/weekly cap the per-agent view
+            can't show."""
+            from relaydeck.db import open_db
+            conn = open_db(self.db_path)
+            try:
+                providers = [
+                    str(r[0]) for r in conn.execute(
+                        "SELECT DISTINCT provider FROM usage_records "
+                        "WHERE provider != '' ORDER BY provider"
+                    ).fetchall()
+                ]
+            finally:
+                conn.close()
+            out = []
+            for prov in providers:
+                try:
+                    windows = self.provider_state_for(prov)
+                except Exception as exc:
+                    out.append({"provider": prov, "error": str(exc)})
+                    continue
+                out.append({
+                    "provider": prov,
+                    "windows": {n: _state_to_dict(s) for n, s in windows.items()},
+                })
+            return {"providers": out}
 
         @host.api.route("/settings/effective", ["GET"])
         async def effective_settings():

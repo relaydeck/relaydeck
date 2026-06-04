@@ -13,6 +13,7 @@ was a read-only `/api/events` SSE feed and `agent events`, but no way to
 from __future__ import annotations
 
 import sys
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -224,3 +225,50 @@ def test_emit_reports_daemon_unreachable(tmp_path, monkeypatch):
     res = CliRunner().invoke(cli_mod.main, ["broadcast", "hello"])
     assert res.exit_code == 1
     assert "unreachable" in res.output.lower()
+
+
+def test_events_tail_agent_history_decodes_db_payload(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    def fake_get(path, *, timeout=5.0):
+        assert path == "/api/agents/alice/events"
+        return _POST_OK, [{
+            "id": 12,
+            "type": "harness.exit",
+            "agent_id": "alice",
+            "payload": '{"returncode": 7, "log_path": "/tmp/run.log"}',
+        }]
+
+    monkeypatch.setattr(cli_mod, "_get_from_daemon", fake_get)
+    res = CliRunner().invoke(cli_mod.main, ["events", "tail", "--agent", "alice"])
+    assert res.exit_code == 0, res.output
+    assert '"returncode": 7' in res.output
+    assert "/tmp/run.log" in res.output
+    assert '\\"returncode\\"' not in res.output
+
+
+def test_events_tail_follow_sends_sse_accept_header(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("RELAYDECK_DAEMON_URL", "http://daemon.test")
+    seen: dict[str, str | None] = {}
+
+    class _Resp:
+        def __iter__(self):
+            return iter(())
+
+        def close(self):
+            pass
+
+    def fake_urlopen(req, *args, **kwargs):
+        assert isinstance(req, urllib.request.Request)
+        seen["url"] = req.full_url
+        seen["accept"] = req.get_header("Accept")
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    res = CliRunner().invoke(cli_mod.main, ["events", "tail", "-f"])
+    assert res.exit_code == 0, res.output
+    assert seen == {
+        "url": "http://daemon.test/api/events",
+        "accept": "text/event-stream",
+    }

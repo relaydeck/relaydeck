@@ -10,6 +10,7 @@ follow path always rendered payloads; this test enforces parity.
 from __future__ import annotations
 
 import sys
+import urllib.request
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -111,3 +112,33 @@ def test_agent_events_since_and_type_combine(tmp_path, monkeypatch):
     assert "harness.exit" in result.output
     assert "harness.spawn" not in result.output
     assert "assistant_message" not in result.output
+
+
+def test_agent_events_follow_uses_daemon_sse(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("RELAYDECK_DAEMON_URL", "http://daemon.test")
+    requested: list[str] = []
+
+    class _Resp:
+        def __iter__(self):
+            return iter([
+                b'data: {"id": 9, "type": "harness.exit", '
+                b'"payload": {"returncode": 7}}\n',
+                b"\n",
+            ])
+
+        def close(self):
+            pass
+
+    def fake_urlopen(req, *args, **kwargs):
+        assert isinstance(req, urllib.request.Request)
+        requested.append(req.full_url)
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    result = CliRunner().invoke(cli, ["agent", "events", "alice", "-f", "--type", "exit"])
+    assert result.exit_code == 0, result.output
+    assert requested == ["http://daemon.test/api/agents/alice/events?stream=true"]
+    assert "harness.exit" in result.output
+    assert "returncode" in result.output

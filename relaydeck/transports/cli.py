@@ -25,6 +25,7 @@ The CLI talks to the same orchestrator loop as the web API.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -2381,6 +2382,21 @@ def _wait_for_status(
     sys.exit(1)
 
 
+def _event_payload_obj(raw: Any) -> Any:
+    """Normalize an event payload from either DB history or live bus events.
+
+    History endpoints return the `events.payload` JSON column as text; SSE bus
+    events already carry decoded objects. Keep both CLI event readers rendering
+    the same readable object instead of double-encoding historical payloads.
+    """
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return {"_raw": raw}
+    return raw or {}
+
+
 @agent.command("events")
 @click.argument("agent_id")
 @click.option("--follow", "-f", is_flag=True, help="Follow events in real-time")
@@ -2410,51 +2426,90 @@ def agent_events(agent_id: str, follow: bool, since_id: int,
     def _matches_type(t: str | None) -> bool:
         return type_filter is None or (t is not None and type_filter in t)
 
-    if follow:
-        import queue
-
-        q = orch.subscribe_events(agent_id)
-        try:
-            hint = f" (filter type~={type_filter!r})" if type_filter else ""
+    def _print_event(ev: dict) -> None:
+        payload = _event_payload_obj(ev.get("payload"))
+        if not payload:
+            prefix = f"#{ev['id']} " if ev.get("id") else ""
+            console.print(f"  [dim]{prefix}[/][cyan]{ev['type']}[/]")
+        else:
+            prefix = f"#{ev['id']} " if ev.get("id") else ""
+            payload_str = json.dumps(payload, default=str)
             console.print(
-                f"[dim]Following events for {agent_id}{hint} (Ctrl+C to stop)...[/]"
+                f"  [dim]{prefix}[/][cyan]{ev['type']}[/] {payload_str[:120]}"
             )
-            while True:
-                try:
-                    event = q.get(timeout=1.0)
-                    if not _matches_type(event.get("type")):
-                        continue
-                    payload_str = json.dumps(event.get("payload", {}), default=str)
-                    console.print(f"  [cyan]{event['type']}[/] {payload_str[:120]}")
-                except queue.Empty:
-                    pass
+
+    if follow:
+        import urllib.error
+        import urllib.request
+
+        from relaydeck.state import get_daemon_url
+
+        if since_id:
+            outcome, resp = _get_from_daemon(f"/api/agents/{agent_id}/events")
+            if outcome == _POST_OK and isinstance(resp, list):
+                for ev in resp[-limit:]:
+                    if int(ev.get("id") or 0) > since_id and _matches_type(ev.get("type")):
+                        _print_event(ev)
+            elif outcome == _POST_DAEMON_ERROR:
+                console.print(f"[yellow]·[/] history read failed: {resp}")
+
+        url = (
+            get_daemon_url().rstrip("/")
+            + f"/api/agents/{agent_id}/events?stream=true"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={"Accept": "text/event-stream", **_daemon_auth_headers()},
+            method="GET",
+        )
+        try:
+            resp = urllib.request.urlopen(req, context=_daemon_ssl_context())
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", "replace")
+            console.print(f"[red]✗[/] HTTP {exc.code}: {body}")
+            raise SystemExit(1) from None
+        except (urllib.error.URLError, OSError) as exc:
+            console.print(
+                f"[red]✗[/] can't reach the daemon ({type(exc).__name__}: {exc}). "
+                "Start it with [bold]relaydeck daemon start[/]."
+            )
+            raise SystemExit(1) from None
+
+        hint = f" (filter type~={type_filter!r})" if type_filter else ""
+        console.print(
+            f"[dim]Following events for {agent_id}{hint} via daemon SSE "
+            "(Ctrl+C to stop)...[/]"
+        )
+        buf = ""
+        try:
+            for line_bytes in resp:
+                line = line_bytes.decode("utf-8", "replace").rstrip("\r\n")
+                if not line:
+                    if buf:
+                        try:
+                            ev = json.loads(buf)
+                        except (TypeError, ValueError):
+                            ev = None
+                        if isinstance(ev, dict) and _matches_type(ev.get("type")):
+                            _print_event(ev)
+                    buf = ""
+                    continue
+                if line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    if buf:
+                        buf += "\n"
+                    buf += line[5:].lstrip()
         except KeyboardInterrupt:
             console.print("\n[dim]Stopped.[/]")
         finally:
-            orch.unsubscribe_events(agent_id, q)
+            with contextlib.suppress(Exception):
+                resp.close()
     else:
         events = orch.get_events(agent_id, since_id=since_id, limit=limit)
         events = [e for e in events if _matches_type(e.get("type"))]
         for ev in events:
-            # `payload` from get_events is JSON TEXT in the DB; follow
-            # mode (bus) hands back a dict. Normalise so the rendering
-            # is the same on both code paths.
-            raw = ev.get("payload")
-            if isinstance(raw, str):
-                try:
-                    payload = json.loads(raw)
-                except (TypeError, ValueError):
-                    payload = {"_raw": raw}
-            else:
-                payload = raw or {}
-            if not payload:
-                console.print(f"  [dim]#{ev['id']}[/] [cyan]{ev['type']}[/]")
-            else:
-                payload_str = json.dumps(payload, default=str)
-                console.print(
-                    f"  [dim]#{ev['id']}[/] [cyan]{ev['type']}[/] "
-                    f"{payload_str[:120]}"
-                )
+            _print_event(ev)
 
 
 @agent.command("unblock")
@@ -2648,7 +2703,7 @@ def events_tail(type_filter: str | None, agent_filter: str | None,
         aid = ev.get("agent_id") or ev.get("agent") or ""
         if agent_filter and aid != agent_filter:
             return
-        payload = ev.get("payload", {})
+        payload = _event_payload_obj(ev.get("payload"))
         try:
             ps = json.dumps(payload, default=str)
         except (TypeError, ValueError):
@@ -2673,7 +2728,11 @@ def events_tail(type_filter: str | None, agent_filter: str | None,
         return
 
     url = get_daemon_url().rstrip("/") + "/api/events"
-    req = urllib.request.Request(url, headers=_daemon_auth_headers(), method="GET")
+    req = urllib.request.Request(
+        url,
+        headers={"Accept": "text/event-stream", **_daemon_auth_headers()},
+        method="GET",
+    )
     console.print("[dim]Following fleet events (Ctrl+C to stop)...[/]")
     try:
         resp = urllib.request.urlopen(req, context=_daemon_ssl_context())
@@ -2704,10 +2763,8 @@ def events_tail(type_filter: str | None, agent_filter: str | None,
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped.[/]")
     finally:
-        try:
+        with contextlib.suppress(Exception):
             resp.close()
-        except Exception:
-            pass
 
 
 @main.command("broadcast")

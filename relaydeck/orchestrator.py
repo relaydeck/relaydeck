@@ -1243,9 +1243,9 @@ class Orchestrator:
 
         When `purge_history` (default True): also remove the agent's
         historical DB rows (events, usage_records, model_invocations,
-        tasks, agent_messages, automation_runs). Pass False to keep that
-        history for audit. Emits `agent.deleted` so the dashboard + plugins
-        react in real time.
+        tasks, agent_messages, agent_results, automation_runs). Pass False to
+        keep that history for audit. Emits `agent.deleted` so the dashboard +
+        plugins react in real time.
         """
         # Capture the spec BEFORE unlinking — we need its workspace to
         # locate the per-agent runtime files.
@@ -1272,6 +1272,7 @@ class Orchestrator:
                     "DELETE FROM usage_records WHERE agent_id = ?",
                     "DELETE FROM model_invocations WHERE agent_id = ?",
                     "DELETE FROM tasks WHERE agent_id = ?",
+                    "DELETE FROM agent_results WHERE agent_id = ?",
                     "DELETE FROM automation_runs WHERE automation_id = ?",
                 ):
                     try:

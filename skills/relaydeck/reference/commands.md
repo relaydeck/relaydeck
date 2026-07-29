@@ -32,7 +32,7 @@ rather than guessing a flag. `rdk` is an alias for `relaydeck`.
 | `relaydeck workspace info [name]` | Plugins + agents in a workspace |
 | `relaydeck workspace set <name>` | Durable default workspace for this machine |
 | `relaydeck workspace plugins <name> [--add p] [--remove p] [--set p]` | Edit a workspace's enabled plugins (no flags = print current) |
-| `relaydeck workspace rm <name>` | Unregister (leaves the directory) |
+| `relaydeck workspace rm <name> [--yes]` | Unregister (leaves the directory; prompts without `--yes`) |
 
 ## Worktrees (parallel branches → workspaces)
 | Command | What |
@@ -47,8 +47,8 @@ rather than guessing a flag. `rdk` is an alias for `relaydeck`.
 | `relaydeck agent create <id> -t <type> -w <ws> --purpose "<role>" [--tag x] [-c autonomy=auto] [--system-prompt "…" \| --system-prompt-file F] [--auto-start]` | Define an agent (doesn't start it) |
 | `relaydeck agent start <id> [<id>…]` | Bring up now |
 | `relaydeck agent stop <id> [<id>…]` | Stop running agent(s) |
-| `relaydeck agent restart <id> [<id>…]` | Stop then start (fresh session) |
-| `relaydeck agent rm <id> [<id>…]` | Delete the spec permanently |
+| `relaydeck agent restart <id> [<id>…]` | Stop then start with the agent's configured session flags |
+| `relaydeck agent rm <id> [<id>…] [--yes] [--keep-history]` | Stop + delete through the daemon; history is purged unless retained explicitly |
 | `relaydeck agent edit <id> [--purpose …] [--add-tag x] [--system-prompt …] [--show]` | Update meta/prompt (no flags → $EDITOR) |
 
 `-t` types: `claude-code`, `codex-cli`, `cursor-cli`, `opencode-cli`,
@@ -70,7 +70,7 @@ rather than guessing a flag. `rdk` is an alias for `relaydeck`.
 | `relaydeck agent send <id> '<body>'` | Push a message into an agent's session |
 | `relaydeck agent wait <id> --status <s> [--not-status <s>] [--timeout <sec>]` | **Block** until a semantic status (`working`/`awaiting-input`/`complete-unread`/`idle`). Exit 0 reached · 1 timeout · 2 usage · 3 transport |
 | `relaydeck agent unblock <id> [-a <answer> \| --enter \| --key <k>]` | Answer a stuck native prompt (no flag = only show the screen) |
-| `relaydeck agent compact <id>` | Compact context in place (KV-safe) when it's filling |
+| `relaydeck agent compact <id>` | Compact context in place when supported (currently Claude Code) |
 | `relaydeck agent escalate <id> [-m msg]` | Hand to a human now (HITL escalation to your channels) |
 
 `--key` names: `enter, esc, ctrl-c, tab, up, down, left, right, y, n, space, backspace`.
@@ -89,7 +89,7 @@ rather than guessing a flag. `rdk` is an alias for `relaydeck`.
 | `relaydeck workspace message '<body>' [--agent <id>] [--from <id>] [--wait <sec>]` | Broadcast into inboxes (or one agent) |
 | `relaydeck workspace inbox [-f] [--full] [--agent <id>]` | Read messages passing through |
 | `relaydeck reply <msg-id> '<body>'` | Threaded reply to a `[relay …]` line (infers recipient) |
-| `relaydeck message <msg-id>` | Read one message by id |
+| `relaydeck message show <msg-id>` | Read one message by id |
 | `relaydeck broadcast '<msg>' [--type T] [--data k=v]` | Ambient event on the stream (not inbox) |
 | `relaydeck events emit <type> [--data k=v] [-m msg]` | Emit a custom event |
 | `relaydeck events tail -f [--type <substr>] [--agent <id>]` | The fleet firehose (history needs `--agent`, no `-f`) |
@@ -114,7 +114,8 @@ the dashboard, `view`, and `events tail` watch — nobody's inbox is touched.
 | `relaydeck manager status` | Manager policy + recent fleet-health actions |
 | `relaydeck hitl status \| test` · `relaydeck hitl ask "<q>"` | HITL channels · test escalation · request a human |
 | `relaydeck workers list \| logs <w> \| tail <w> \| retry <w>` | Daemon background workers |
-| `relaydeck integration install <harness> \| list \| uninstall` | Vendor-side state-reporting hooks |
+| `relaydeck integration list` | Show each harness's semantic-status source (hook or always-on engine) |
+| `relaydeck integration install claude \| uninstall claude` | Manage Claude's vendor hook; classifier entries have nothing to install |
 | `relaydeck view [-w <ws>]` | Built-in multi-pane TUI |
 
 ## Skills & plugins → `reference/extending.md`
@@ -136,7 +137,9 @@ the dashboard, `view`, and `events tail` watch — nobody's inbox is touched.
 | --- | --- |
 | `relaydeck provider list` | Model catalogs from provider plugins |
 | `relaydeck defaults list \| get <role> \| set <role> <spec> \| unset <role>` | Default model per role (classifier, voice, image, …) |
-| `relaydeck preset list \| create <name> <provider/model> \| edit \| rm` | Named model presets |
+| `relaydeck preset list` | Named model presets |
+| `relaydeck preset create <name> -p <provider> -m <model>` | Create a preset |
+| `relaydeck preset edit <name> [-p provider] [-m model]` · `rm <name>` | Edit or remove a preset |
 | `relaydeck recipe list \| show <name>` | Reusable system-prompt addenda |
 
 ## See everything at once

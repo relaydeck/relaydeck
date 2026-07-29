@@ -241,12 +241,12 @@ relaydeck agent result get reviewer --json     # machine-readable
 # Long-running agent filling its context? Compact in place (KV-safer than a
 # reset) — check fill first:
 relaydeck context-watch status
-relaydeck agent compact implementer
+relaydeck agent compact implementer  # currently supported by Claude Code
 
 # Tear down — always clean up one-offs:
 relaydeck agent stop reviewer implementer
-relaydeck agent rm reviewer implementer        # delete the specs
-relaydeck workspace rm proj                     # unregister (leaves the dir)
+relaydeck agent rm reviewer implementer --yes  # stop + delete via daemon
+relaydeck workspace rm proj --yes               # unregister (leaves the dir)
 ```
 
 ## What a fleet can do (purpose is yours)
@@ -318,7 +318,7 @@ for id in security perf tests; do
     || relaydeck agent screen "$id"     # if it didn't finish, look at why
   relaydeck agent result get "$id"       # durable hand-back (survives a crash)
 done
-relaydeck agent rm security perf tests   # clean up
+relaydeck agent rm security perf tests --yes  # clean up without an input prompt
 ```
 
 ## Reference (deeper material next to this file)

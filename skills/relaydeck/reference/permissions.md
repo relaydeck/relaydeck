@@ -12,8 +12,8 @@ escalate stack. Use it deliberately.
 2. relaydeck's **semantic-status engine** reads the rendered screen ~1×/s and
    flips the agent to `awaiting-input` (visible in `agent list`, on the
    dashboard, and as an `agent.status_changed` event). *Detection is
-   automatic for every harness — it never types for you.* (It's powered by
-   the integration hooks — see `reference/monitoring.md`.)
+   automatic for every harness — it never types for you.* A fresh vendor hook
+   or human signal temporarily takes precedence; see `reference/monitoring.md`.
 3. From there, one of three things answers it: autonomy (set at spawn), the
    `autopilot` plugin (automatic), or you (`agent unblock`).
 
@@ -132,7 +132,7 @@ When you script against the API or share access, manage tokens explicitly:
 ```sh
 relaydeck auth show                    # location + redacted token
 relaydeck auth token                   # print it raw (for $RELAYDECK_TOKEN / curl)
-relaydeck auth issue --label ci        # mint a scoped Bearer token
+relaydeck auth issue --label ci --scope read-only  # mint a scoped Bearer token
 relaydeck auth list                    # labels, scopes, last-used, expiry
 relaydeck auth revoke <id>             # invalidate one immediately
 relaydeck auth rotate                  # new daemon token, old invalidated

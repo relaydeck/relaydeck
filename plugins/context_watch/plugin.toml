@@ -11,7 +11,7 @@ workspace_scoped = false
 # Capabilities:
 #   events.subscribe — consume usage.record (per-turn token usage)
 #   events.emit      — agent.context (fullness, on state change)
-#   cli.register     — `relaydeck context status`
+#   cli.register     — `relaydeck context-watch status`
 #   api.register     — `/api/plugins/context-watch/{state,tui}`
 #   agents.list      — resolve an agent's workspace for the payload
 declared_capabilities = [

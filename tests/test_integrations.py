@@ -31,6 +31,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
 from relaydeck.integrations import (
     all_integrations,
@@ -85,6 +86,21 @@ def test_classifier_uninstall_is_safe_noop(tmp_path, monkeypatch):
     it = get("pi")
     assert it is not None
     assert it.uninstall() is False
+
+
+def test_classifier_uninstall_cli_explains_always_on_engine(tmp_path, monkeypatch):
+    """The CLI must not describe an always-on engine source as a missing hook."""
+    import relaydeck.transports.cli as cli_mod
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = CliRunner().invoke(
+        cli_mod.main, ["integration", "uninstall", "codex"],
+    )
+
+    assert result.exit_code == 0, result.output
+    output = " ".join(result.output.split())
+    assert "built-in semantic-status engine" in output
+    assert "no vendor hook to uninstall" in output
 
 
 def test_claude_kind_is_hook():

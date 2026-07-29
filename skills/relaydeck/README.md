@@ -18,7 +18,9 @@ cross-repo fan-out, monitoring/ops. Not "coding orchestration only."
 This bundle stands alone — it is **not** a relaydeck-internal skill. The
 in-fleet skills (`relaydeck-fleet`, `relaydeck-cli`, …) are injected into
 agents that already run *inside* relaydeck; this one is for the agent
-*outside*, looking in. See `../README.md` for the full catalog of skills.
+*outside*, looking in. The source repository's
+[skills catalog](https://github.com/relaydeck/relaydeck/blob/main/skills/README.md)
+lists the in-fleet bundles separately.
 
 ## What's in here
 
@@ -36,9 +38,10 @@ relaydeck/
     └── recipes.md               # fan-out, pipeline, quorum, migration, cross-repo, monitoring
 ```
 
-`SKILL.md` stays lean (agents load it always); the `reference/` files go deep
-(loaded on demand). Every command in them is verified against the real CLI to
-keep an agent's tool-call failure rate low.
+The frontmatter stays lean because its metadata is always visible; the
+`SKILL.md` body loads when the skill triggers, and `reference/` files load on
+demand. Every command is checked against the real CLI to keep an agent's
+tool-call failure rate low.
 
 ## Install (for an end user)
 

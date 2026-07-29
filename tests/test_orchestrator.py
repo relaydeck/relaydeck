@@ -235,7 +235,7 @@ class TestOrchestrator:
     def _seed_agent_artifacts(self, orch, agent_id, workspace):
         """Create the per-agent runtime files + DB history a real agent
         would leave behind, so we can assert thorough delete clears them."""
-        from relaydeck.db import log_event, open_db, record_usage
+        from relaydeck.db import log_event, open_db, put_result, record_usage
         rt = self.config_home / "workspaces" / workspace / "runtime"
         prompts = self.config_home / "workspaces" / workspace / "prompts"
         (rt / "pi-sessions" / agent_id).mkdir(parents=True, exist_ok=True)
@@ -252,6 +252,7 @@ class TestOrchestrator:
             ensure_session(conn, "sess")
             log_event(conn, "sess", "harness.spawn", {}, agent_id=agent_id)
             record_usage(conn, agent_id, "sess", "m", "p", total_tokens=10)
+            put_result(conn, agent_id, "durable result", key="review")
         finally:
             conn.close()
 
@@ -259,9 +260,16 @@ class TestOrchestrator:
         from relaydeck.db import open_db
         conn = open_db(orch.db_path)
         try:
-            ev = conn.execute("SELECT COUNT(*) FROM events WHERE agent_id=?", (agent_id,)).fetchone()[0]
-            us = conn.execute("SELECT COUNT(*) FROM usage_records WHERE agent_id=?", (agent_id,)).fetchone()[0]
-            return ev, us
+            ev = conn.execute(
+                "SELECT COUNT(*) FROM events WHERE agent_id=?", (agent_id,),
+            ).fetchone()[0]
+            us = conn.execute(
+                "SELECT COUNT(*) FROM usage_records WHERE agent_id=?", (agent_id,),
+            ).fetchone()[0]
+            results = conn.execute(
+                "SELECT COUNT(*) FROM agent_results WHERE agent_id=?", (agent_id,),
+            ).fetchone()[0]
+            return ev, us, results
         finally:
             conn.close()
 
@@ -269,7 +277,7 @@ class TestOrchestrator:
         orch = Orchestrator(config_home=self.config_home)
         orch.create_agent("gone", "simple", "Gone", workspace="ws")
         self._seed_agent_artifacts(orch, "gone", "ws")
-        assert self._history_counts(orch, "gone") != (0, 0)
+        assert self._history_counts(orch, "gone") != (0, 0, 0)
 
         orch.delete_agent("gone")  # purge_history defaults True
 
@@ -279,7 +287,7 @@ class TestOrchestrator:
         assert not (rt / "opencode-homes" / "gone").exists()
         assert not (rt / "fleet-context" / "gone.md").exists()
         assert not (self.config_home / "workspaces" / "ws" / "prompts" / "gone.md").exists()
-        assert self._history_counts(orch, "gone") == (0, 0)
+        assert self._history_counts(orch, "gone") == (0, 0, 0)
 
     def test_delete_keep_history(self, tmp_path):
         orch = Orchestrator(config_home=self.config_home)
@@ -289,8 +297,9 @@ class TestOrchestrator:
         orch.delete_agent("keep", purge_history=False)
 
         # Files always go; history is preserved for audit.
-        assert not (self.config_home / "workspaces" / "ws" / "runtime" / "pi-sessions" / "keep").exists()
-        assert self._history_counts(orch, "keep") != (0, 0)
+        sessions = self.config_home / "workspaces" / "ws" / "runtime" / "pi-sessions"
+        assert not (sessions / "keep").exists()
+        assert self._history_counts(orch, "keep") != (0, 0, 0)
 
     def test_delete_files_path_traversal_guard(self, tmp_path):
         orch = Orchestrator(config_home=self.config_home)

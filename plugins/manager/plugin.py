@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
+from contextlib import suppress
 from typing import Any
 
 from relaydeck.sdk import (
@@ -101,10 +102,8 @@ class ManagerPlugin(Plugin):
 
     def _policy(self) -> dict[str, str]:
         vals = dict(_DEFAULTS)
-        try:
+        with suppress(Exception):
             vals.update(self.host.settings.all())
-        except Exception:
-            pass
         return {k: str(vals.get(k) or _DEFAULTS[k]).lower() for k in _DEFAULTS}
 
     # ── Handlers ─────────────────────────────────────────────────────
@@ -269,8 +268,10 @@ class ManagerPlugin(Plugin):
                 console.print("[dim]no actions yet.[/]")
                 return
             table = Table(title="recent manager actions")
-            table.add_column("agent"); table.add_column("trigger")
-            table.add_column("action"); table.add_column("done")
+            table.add_column("agent")
+            table.add_column("trigger")
+            table.add_column("action")
+            table.add_column("done")
             table.add_column("detail")
             for r in actions[-20:]:
                 table.add_row(
@@ -316,7 +317,7 @@ def _call_daemon(path: str, *, payload: dict | None = None,
 PLUGIN = ManagerPlugin()
 
 
-def _legacy_on_load(ctx: PluginContext) -> "ManagerPlugin":
+def _legacy_on_load(ctx: PluginContext) -> ManagerPlugin:
     """Boot against a PluginContext (tests + legacy loader); mirrors autopilot."""
     host = PluginHost(
         name=PLUGIN_NAME,

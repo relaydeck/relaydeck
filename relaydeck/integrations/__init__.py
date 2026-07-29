@@ -1,12 +1,11 @@
 """
 Vendor-side hook integrations.
 
-For each harness relaydeck supports, there's a small script that
-plugs into the harness's own native hook / extension system.
-The script POSTs to `/api/agents/{id}/state` on lifecycle
-events so the daemon knows what the agent is *actually* doing
-(model call in flight, awaiting permission, idle), not what
-it can infer by classifying message text.
+Every PTY harness is covered by the built-in semantic-status engine. Where a
+harness exposes a native lifecycle API, relaydeck may additionally install a
+small vendor-side script that POSTs `/api/agents/{id}/state` events. Today
+Claude Code has that deterministic hook; hookless harnesses appear in this
+catalog as `kind="classifier"` and use the always-on screen engine.
 
 Why split this out from the harness plugins themselves: the
 hook lives in the harness's own filesystem (`~/.claude/hooks/`,

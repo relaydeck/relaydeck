@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import suppress
 from typing import Any
 
 from relaydeck.sdk import Event, Plugin, PluginContext, PluginEventBus, PluginHost
@@ -182,10 +183,8 @@ class UsageLimitsPlugin(Plugin):
         immediately without needing a daemon reload.
         """
         vals = dict(_DEFAULTS)
-        try:
+        with suppress(Exception):
             vals.update(self.host.settings.all())
-        except Exception:
-            pass
         # Settings round-trip through env / file — strings need coercion.
         return {
             "session_window_hours": float(vals.get("session_window_hours") or 0),
@@ -559,7 +558,7 @@ def _state_to_dict(s: WindowState) -> dict[str, Any]:
 PLUGIN = UsageLimitsPlugin()
 
 
-def _legacy_on_load(ctx: PluginContext) -> "UsageLimitsPlugin":
+def _legacy_on_load(ctx: PluginContext) -> UsageLimitsPlugin:
     """Compatibility helper so plugin discovery can boot the plugin
     via the same `PLUGIN.on_load(ctx)` shape used by other built-ins
     until full SDK loader parity ships.

@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -199,10 +200,8 @@ class AutopilotPlugin(Plugin):
 
     def _settings(self) -> dict[str, Any]:
         vals = dict(_DEFAULTS)
-        try:
+        with suppress(Exception):
             vals.update(self.host.settings.all())
-        except Exception:
-            pass
         return {
             "mode": str(vals.get("mode") or "benign").lower(),
             "auto_accept_terms": str(vals.get("auto_accept_terms", False)).lower()
@@ -416,8 +415,10 @@ class AutopilotPlugin(Plugin):
         def rules_cmd():
             """List the prompt-shape allowlist autopilot can auto-answer."""
             table = Table(title="autopilot rules")
-            table.add_column("rule"); table.add_column("tier")
-            table.add_column("answer"); table.add_column("why")
+            table.add_column("rule")
+            table.add_column("tier")
+            table.add_column("answer")
+            table.add_column("why")
             for r in _RULES:
                 ans = (f"key:{r.action['key']}" if "key" in r.action
                        else f"{r.action.get('data', '')!r}+Enter")
@@ -489,7 +490,7 @@ def _call_daemon(path: str, *, payload: dict | None = None,
 PLUGIN = AutopilotPlugin()
 
 
-def _legacy_on_load(ctx: PluginContext) -> "AutopilotPlugin":
+def _legacy_on_load(ctx: PluginContext) -> AutopilotPlugin:
     """Boot against a PluginContext (tests + legacy loader). Mirrors the
     hitl plugin's pattern."""
     host = PluginHost(

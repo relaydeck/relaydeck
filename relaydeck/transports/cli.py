@@ -2097,19 +2097,43 @@ def _stop_one(agent_id: str) -> bool:
 
 
 @agent.command("rm")
-@click.argument("agent_id")
-@click.confirmation_option(prompt="Are you sure you want to delete this agent?")
-def agent_rm(agent_id: str):
-    """Delete an agent permanently."""
-    from relaydeck.orchestrator import get_orchestrator
+@click.argument("agent_ids", nargs=-1, required=True)
+@click.option(
+    "--keep-history",
+    is_flag=True,
+    help="Keep events, usage, messages, results, and other audit history.",
+)
+@click.confirmation_option(prompt="Delete the selected agent(s) permanently?")
+def agent_rm(agent_ids: tuple[str, ...], keep_history: bool):
+    """Delete one or more agents permanently.
 
-    orch = get_orchestrator(_get_config_home())
-    try:
-        orch.delete_agent(agent_id)
-    except ValueError as exc:
-        console.print(f"[red]✗[/] {exc}")
-        sys.exit(1)
-    console.print(f"[red]✗[/] Agent [bold]{agent_id}[/] deleted")
+    Deletion always goes through the daemon because it may need to stop a
+    live PTY before removing the YAML spec and database row. If the daemon is
+    unreachable, fail closed: a CLI-local delete could orphan a process owned
+    by the real daemon.
+    """
+    failures = 0
+    for agent_id in agent_ids:
+        path = f"/api/agents/{agent_id}"
+        if keep_history:
+            path += "?purge_history=false"
+        outcome, resp = _json_to_daemon(
+            "DELETE", path, timeout=30.0,
+        )
+        if outcome == _POST_OK:
+            console.print(f"[green]✓[/] Agent [bold]{agent_id}[/] deleted")
+            continue
+        failures += 1
+        if outcome == _POST_DAEMON_ERROR:
+            console.print(f"[red]✗[/] {agent_id}: {resp}")
+        else:
+            console.print(
+                f"[red]✗[/] {agent_id}: daemon unreachable ({resp}); "
+                "nothing was deleted. Start it with "
+                "[bold]relaydeck daemon start[/] and retry."
+            )
+    if failures:
+        raise SystemExit(1)
 
 
 @agent.command("restart")
@@ -2127,7 +2151,9 @@ def agent_restart(agent_ids: tuple[str, ...], status_filter: str | None,
     Same calling shapes as `agent start` / `agent stop`. Useful for
     picking up spec changes (purpose, system_prompt, tags) that
     only take effect at spawn, and for clearing zombies where the
-    DB says `running` but the daemon has no live PTY.
+    DB says `running` but the daemon has no live PTY. The start uses
+    the agent's configured session flags; restart does not imply a fresh
+    conversation.
 
     Per-id semantics: if stop succeeds and start fails the exit
     code reflects the start failure — the agent ends up stopped.
@@ -2707,9 +2733,12 @@ def agent_compact(agent_id: str):
     Asks the harness to summarize-and-trim its conversation without killing
     the process, so the prompt prefix stays stable and the KV cache mostly
     survives — the move when an agent's context is filling (see
-    [bold]relaydeck context status[/]) but you don't want to lose its session.
-    If the harness has no in-place compaction, start a fresh session instead
-    (`relaydeck agent restart`), after capturing work with `agent result put`.
+    [bold]relaydeck context-watch status[/]) but you don't want to lose its
+    session.
+    If the harness has no in-place compaction, capture work with `agent result
+    put` before restarting. A normal `agent restart` honors configured
+    resume/continue flags; the manager's `fresh-session` action is the explicit
+    clean-session path.
     """
     outcome, resp = _json_to_daemon("POST", f"/api/agents/{agent_id}/compact", {})
     if outcome == _POST_OK and isinstance(resp, dict):
@@ -2743,7 +2772,7 @@ def agent_escalate(agent_id: str, message: str):
 
     Emits a HITL escalation so every configured channel (Telegram, web, …)
     pings a person — the move after [bold]autopilot[/] held a prompt or
-    [bold]context status[/] went critical and you want a human, not a policy.
+    [bold]context-watch status[/] went critical and you want a human, not a policy.
     """
     outcome, resp = _json_to_daemon(
         "POST", f"/api/agents/{agent_id}/escalate", {"message": message},
@@ -4462,27 +4491,19 @@ def layout_rm(name: str):
 
 @main.group(name="integration")
 def integration_cli():
-    """Install vendor-side hooks that report agent state.
+    """Inspect semantic-status sources and manage vendor-side hooks.
 
-    For each supported harness (Claude Code, codex, pi, …) relaydeck
-    ships a small script that plugs into the harness's native
-    hook/extension system. The script POSTs to the daemon when
-    the harness fires lifecycle events (a tool call starts,
-    permission is requested, the agent finishes a turn), so the
-    daemon learns the *observable* state — `working`,
-    `awaiting-input`, `idle` — instead of inferring it from
-    message content.
-
-    This is what powers the semantic-status column on
-    `relaydeck agent list`, the workspace status roll-up, and the
-    `relaydeck agent wait` synchronization primitive.
+    The built-in screen engine covers every PTY harness automatically.
+    Harnesses with a native lifecycle API may additionally expose an
+    installable hook (currently Claude Code). `integration list` distinguishes
+    deterministic hooks from always-on engine/classifier sources.
     """
     pass
 
 
 @integration_cli.command("list")
 def integration_list():
-    """Show which harnesses have integration hooks installed."""
+    """Show each harness's semantic-status source and state."""
     from relaydeck import integrations
     integrations.register_builtin_integrations()
 
@@ -4517,7 +4538,7 @@ def integration_list():
 @integration_cli.command("install")
 @click.argument("name")
 def integration_install(name: str):
-    """Install the integration hook for HARNESS (idempotent)."""
+    """Install HARNESS's vendor hook; engine sources are already active."""
     from relaydeck import integrations
     integrations.register_builtin_integrations()
 
@@ -4549,7 +4570,7 @@ def integration_install(name: str):
 @integration_cli.command("uninstall")
 @click.argument("name")
 def integration_uninstall(name: str):
-    """Remove the integration hook for HARNESS."""
+    """Remove HARNESS's vendor hook; engine sources cannot be removed."""
     from relaydeck import integrations
     integrations.register_builtin_integrations()
 
@@ -4557,6 +4578,12 @@ def integration_uninstall(name: str):
     if it is None:
         console.print(f"[red]✗[/] No integration named [bold]{name}[/]")
         sys.exit(2)
+    if getattr(it, "kind", "hook") == "classifier":
+        console.print(
+            f"[dim]·[/] [bold]{name}[/] uses the built-in semantic-status "
+            "engine; there is no vendor hook to uninstall."
+        )
+        return
     try:
         removed = it.uninstall()
     except Exception as exc:

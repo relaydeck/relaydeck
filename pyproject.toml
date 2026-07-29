@@ -60,12 +60,6 @@ packages = ["relaydeck", "plugins"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "skills/relaydeck" = "relaydeck/bundled_skills/relaydeck"
-# The two in-fleet skills live in the consolidated top-level `skills/` folder
-# but are materialized by the `skills` plugin via a `../../skills/...` path in
-# its plugin.toml. Identity-map them into the wheel at the same relative
-# location so `plugins/skills/../../skills/<name>` resolves post-install too.
-"skills/relaydeck-fleet" = "skills/relaydeck-fleet"
-"skills/relaydeck-plugin-dev" = "skills/relaydeck-plugin-dev"
 
 [dependency-groups]
 dev = [

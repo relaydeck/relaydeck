@@ -29,7 +29,7 @@ for id in security perf a11y; do
     || relaydeck agent screen "$id"
   relaydeck agent result get "$id"        # durable — survives an agent crash
 done
-relaydeck agent rm security perf a11y
+relaydeck agent rm security perf a11y --yes
 ```
 
 ## 2. Pipeline (stage → stage, each waits for the last)
@@ -57,7 +57,7 @@ relaydeck agent start r1 r2 r3
 relaydeck workspace message 'Review PR #42. Reply: APPROVE or REJECT + reason.'
 for r in r1 r2 r3; do relaydeck agent wait "$r" --status complete-unread --timeout 600; done
 relaydeck workspace inbox --full          # tally the verdicts, decide in your logic
-relaydeck agent rm r1 r2 r3
+relaydeck agent rm r1 r2 r3 --yes
 ```
 
 Cap at three — more reviewers rarely change a 2/3 quorum and just burn tokens.
@@ -152,5 +152,5 @@ done
 - **Spawning a worker that re-runs this bootstrap.** That's a
   fleet-of-fleets. A spawned worker is already inside relaydeck
   (`RELAYDECK_AGENT_ID` set) and §0 stops it — keep it that way.
-- **Forgetting teardown.** `relaydeck agent rm` the one-offs;
+- **Forgetting teardown.** `relaydeck agent rm <ids...> --yes` the one-offs;
   `relaydeck worktree remove` the throwaway branches.

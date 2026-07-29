@@ -16,12 +16,13 @@ event carries a `recommend` so a manager policy (or a human watching the
 dashboard / `view` Context tab) knows the move: compact, or start fresh.
 
 Pure-core: `classify_fill` is a free function so the thresholds are unit-tested
-without a daemon, and `relaydeck context status` shows the live picture.
+without a daemon, and `relaydeck context-watch status` shows the live picture.
 """
 
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -95,10 +96,8 @@ class ContextWatchPlugin(Plugin):
 
     def _settings(self) -> dict[str, Any]:
         vals = dict(_DEFAULTS)
-        try:
+        with suppress(Exception):
             vals.update(self.host.settings.all())
-        except Exception:
-            pass
         return {
             "warn_pct": float(vals.get("warn_pct") or 0) or 70.0,
             "critical_pct": float(vals.get("critical_pct") or 0) or 88.0,
@@ -241,8 +240,10 @@ class ContextWatchPlugin(Plugin):
                               "(metered harnesses feed this).[/]")
                 return
             table = Table(title="context fill")
-            table.add_column("agent"); table.add_column("fill")
-            table.add_column("used/window"); table.add_column("state")
+            table.add_column("agent")
+            table.add_column("fill")
+            table.add_column("used/window")
+            table.add_column("state")
             table.add_column("model")
             color = {"ok": "green", "warn": "yellow", "critical": "red"}
             for r in rows:
@@ -292,7 +293,7 @@ def _call_daemon(path: str, *, payload: dict | None = None,
 PLUGIN = ContextWatchPlugin()
 
 
-def _legacy_on_load(ctx: PluginContext) -> "ContextWatchPlugin":
+def _legacy_on_load(ctx: PluginContext) -> ContextWatchPlugin:
     """Boot against a PluginContext (tests + legacy loader); mirrors autopilot."""
     host = PluginHost(
         name=PLUGIN_NAME,

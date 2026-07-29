@@ -8,10 +8,10 @@ capability.
 
 Two kinds, by **how they reach an agent**:
 
-- **Standalone skills** live here under `skills/<name>/`. They're packaged
-  with relaydeck and installed into an agent's own skill root (e.g.
-  `~/.claude/skills`) by `relaydeck skills install`. The flagship `relaydeck`
-  skill is for an agent *outside* a fleet, looking in.
+- The standalone **`relaydeck` driver skill** lives here under
+  `skills/relaydeck/`. It's packaged with relaydeck and installed into an
+  agent's own skill root (e.g. `~/.claude/skills`) by
+  `relaydeck skills install`. It is for an agent *outside* a fleet, looking in.
 - **Plugin-materialized skills** ship *with the plugin that owns them* (in
   `plugins/<plugin>/SKILL.md`) and are injected into a workspace's
   `runtime/skills/` only when that plugin is enabled — so a skill and its
@@ -20,18 +20,18 @@ Two kinds, by **how they reach an agent**:
 
 > Design note: plugin-owned skills stay co-located with their plugin on
 > purpose (self-contained, independently publishable). This folder is the
-> catalog + home of the standalone/generic skills; it is **not** a dumping
-> ground that breaks plugin packaging. The two generic in-fleet skills
-> (`relaydeck-fleet`, `relaydeck-plugin-dev`) live here but are materialized by
-> the `skills` plugin via a relative path (see `plugins/skills/plugin.toml`).
+> catalog + home of the standalone driver skill; it is **not** a dumping
+> ground that breaks plugin packaging. The generic in-fleet skills
+> (`relaydeck-fleet`, `relaydeck-plugin-dev`) live with the `skills` plugin
+> that materializes them.
 
 ## The catalog
 
 | Skill | Teaches | Lives in | Reaches an agent via |
 | --- | --- | --- | --- |
 | **relaydeck** | Install + drive a fleet from *outside* (the operator playbook) | `skills/relaydeck/` | `relaydeck skills install` → `~/.claude` / `~/.codex` skill root; or copy the folder |
-| **relaydeck-fleet** | Orient + admin commands for an agent *inside* a fleet (look around, find peers, spawn/stop) | `skills/relaydeck-fleet/` | `skills` plugin → workspace `runtime/skills/` |
-| **relaydeck-plugin-dev** | Author, test, and ship a relaydeck plugin (private / community / core) | `skills/relaydeck-plugin-dev/` | `skills` plugin (toggle: `inject_plugin_authoring_skill`) |
+| **relaydeck-fleet** | Orient + admin commands for an agent *inside* a fleet (look around, find peers, spawn/stop) | `plugins/skills/relaydeck-fleet/` | `skills` plugin → workspace `runtime/skills/` |
+| **relaydeck-plugin-dev** | Author, test, and ship a relaydeck plugin (private / community / core) | `plugins/skills/relaydeck-plugin-dev/` | `skills` plugin (toggle: `inject_plugin_authoring_skill`) |
 | **relaydeck-cli** | Peer messaging contract — reply to `[relay from=…]`, hand off, report status | `plugins/messaging/SKILL.md` | `messaging` plugin |
 | **relaydeck-telegram** | Receive + reply through the Telegram gateway | `plugins/telegram/SKILL.md` | `telegram` plugin |
 | **relaydeck-prompts** | Ask a human a tap-able Approve/Reject question | `plugins/prompts/SKILL.md` | `prompts` plugin |

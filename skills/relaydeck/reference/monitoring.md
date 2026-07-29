@@ -72,8 +72,12 @@ the harness can't compact, capture work and restart fresh:
 relaydeck agent compact <id>                       # in-place summarize+trim
 # harness has no in-place compaction →
 relaydeck agent result put <id> --summary "checkpoint" --body @state.md
-relaydeck agent restart <id>                       # fresh session
+relaydeck agent restart <id>                       # restart as configured
 ```
+
+In-place compaction is currently implemented for Claude Code. A normal
+`agent restart` preserves the agent's configured resume/continue flags; it
+does not promise a fresh conversation.
 
 Models with no catalogued context window are reported honestly as unknown —
 context-watch never guesses.
@@ -124,30 +128,30 @@ relaydeck workers tail <worker>       # follow a worker's logs
 relaydeck workers retry <worker>      # re-arm one stuck in crash_loop/errored
 ```
 
-## Integration hooks (where the status accuracy comes from)
+## Semantic-status sources
 
-Semantic status (`working` / `awaiting-input` / `idle`) is most accurate when
-relaydeck installs a small **vendor-side hook** into each harness's native
-hook system — the harness POSTs lifecycle events to the daemon instead of
-relaydeck inferring state from screen scraping.
+The built-in semantic engine watches every running PTY and derives `working`,
+`awaiting-input`, `complete-unread`, and `idle` from the rendered screen. It
+is always on and needs no installation. Claude Code can additionally use a
+vendor-side hook for deterministic lifecycle signals; hookless harnesses are
+listed as `classifier` entries for catalog compatibility but use the engine.
 
 ```sh
-relaydeck integration list                 # which harnesses have hooks installed
-relaydeck integration install claude-code  # idempotent; per harness
-relaydeck integration uninstall codex
+relaydeck integration list                 # hook vs always-on engine per harness
+relaydeck integration install claude       # idempotent vendor hook
+relaydeck integration uninstall claude
 relaydeck integration cleanup-all          # before uninstalling relaydeck
 ```
 
-This is what powers the status column on `agent list`, the workspace status
-roll-up, and the `agent wait` synchronization primitive. See
-`reference/extending.md` for writing your *own* event-driven plugins (the
-programmatic counterpart to these hooks).
+The hook improves source precision for Claude; the engine remains the
+universal fallback and reclaims stale hook/manual signals. These sources power
+the status column, workspace roll-up, and `agent wait` synchronization.
 
 ## Audit trail
 
 ```sh
-relaydeck audit                       # the daemon audit log
-relaydeck automation                  # automation run history
+relaydeck audit tail                  # recent daemon audit records
+relaydeck automation list             # automations with run history
 ```
 
 Use these for "what happened and who/what did it" after a run — the durable

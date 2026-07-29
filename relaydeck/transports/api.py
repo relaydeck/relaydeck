@@ -1529,7 +1529,7 @@ def create_app(config_home: Path | None = None) -> FastAPI:
     async def delete_agent(agent_id: str, request: Request, purge_history: bool = True):
         """Delete an agent. Always removes the spec, DB row, and per-agent
         runtime files. `purge_history=true` (default) also clears the
-        agent's events/usage/invocations/tasks/messages/automation_runs;
+        agent's events/usage/invocations/tasks/messages/results/automation_runs;
         pass `purge_history=false` to keep that history for audit."""
         orch.delete_agent(agent_id, purge_history=purge_history)
         audit.record(

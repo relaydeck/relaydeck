@@ -24,9 +24,9 @@ An agent sees a skill from one of three places:
 - **Runtime/plugin skills** — materialized by a plugin into a workspace
   (e.g. `messaging` injects `relaydeck-cli`, `telegram` injects
   `relaydeck-telegram`). Always injected when the plugin is enabled.
-- **User skills** — skills you import into a workspace. Gated per agent by the
-  agent's `skills` allow-list (the harness `skills` setting); an agent only
-  sees the user skills it's allowed to.
+- **User skills** — skills you import into a workspace. Gated for the whole
+  workspace by the `skills` harness gate in `agent.toml`; every newly spawned
+  agent in an enabled workspace sees the valid user skills.
 - **Native tool skills** — whatever the harness already reads from its own
   skill root (`~/.claude/skills`, `~/.codex/skills`).
 
@@ -89,8 +89,8 @@ relaydeck plugin unset autopilot mode              # back to env/schema default
 Per-workspace enablement (vs global) is on the workspace:
 ```sh
 relaydeck workspace plugins proj                   # show enabled
-relaydeck workspace plugins proj --add usage-limits --add hitl
-relaydeck workspace plugins proj --remove telegram
+relaydeck workspace plugins proj --add messaging --add skills
+relaydeck workspace plugins proj --add fleet-context
 ```
 
 ### Install / update / remove
@@ -114,7 +114,7 @@ relaydeck plugin new my-plugin --pattern reactor   # reactor|workflow|harness|pr
 relaydeck plugin lint ./relaydeck-plugin-my-plugin/plugin.toml
 relaydeck plugin test ./relaydeck-plugin-my-plugin
 relaydeck plugin publish-check ./relaydeck-plugin-my-plugin
-relaydeck plugin dev <name>                         # set up an editable checkout
+relaydeck plugin dev [path]                         # set up an editable checkout
 ```
 
 A plugin reacts to the same events you see on `events tail` (the
@@ -129,10 +129,10 @@ identical, only packaging differs.
 
 Two distinct "hook" mechanisms, don't confuse them:
 
-1. **Integration hooks** (vendor-side): `relaydeck integration install
-   <harness>` drops a script into the harness's *own* hook system so it
-   reports lifecycle state to the daemon. This is about *status accuracy* —
-   see `reference/monitoring.md`.
+1. **Integration telemetry**: the always-on engine derives status from every
+   PTY; `relaydeck integration install claude` can add a deterministic
+   vendor-side hook for Claude Code. This is about *status accuracy* — see
+   `reference/monitoring.md`.
 2. **Plugin event reactors** (daemon-side): a plugin that subscribes to
    `events.subscribe` and runs code when an event fires (e.g. `manager`
    reacting to `agent.context`). This is how you automate policy. Scaffold

@@ -409,7 +409,9 @@ def test_skill_md_mentions_peer_discovery():
     Discovery commands live in the fleet skill; introduce-yourself stays
     in the messaging skill (where 'peers can't find me' is felt)."""
     repo = Path(__file__).resolve().parent.parent
-    fleet = (repo / "skills" / "relaydeck-fleet" / "SKILL.md").read_text()
+    fleet = (
+        repo / "plugins" / "skills" / "relaydeck-fleet" / "SKILL.md"
+    ).read_text()
     cli = (repo / "plugins" / "messaging" / "SKILL.md").read_text()
     assert "relaydeck agent find" in fleet, \
         "fleet skill must teach peer discovery via `relaydeck agent find`"

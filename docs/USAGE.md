@@ -43,7 +43,7 @@ match wins.
 relaydeck workspace add . --name api --plugin messaging --plugin skills
 relaydeck workspace list                 # all workspaces + health
 relaydeck workspace info api             # plugins + agents in one workspace
-relaydeck workspace plugins api --add github     # toggle plugins per workspace
+relaydeck workspace plugins api --add fleet-context  # add a harness gate
 relaydeck workspace set api              # durable default for this shell
 relaydeck workspace rm api               # unregister (leaves the directory)
 ```
@@ -54,7 +54,7 @@ the source of truth the harness reads at spawn (see the skill-injection note in 
 Git worktrees are first-class workspaces (a branch per task):
 
 ```sh
-relaydeck worktree create api --branch feat/x --name api-feat-x
+relaydeck worktree create feat/x --repo . --name api-feat-x
 relaydeck worktree list
 ```
 
@@ -83,7 +83,8 @@ relaydeck skills install --target both   # Claude + Codex skill roots
 
 ```sh
 relaydeck skills add <source>            # discover + import from any supported source
-relaydeck skills import-git <git-url>    # clone a Git/GitHub skill + link it
+relaydeck skills import-git <git-url> --workspace api
+                                         # clone a Git/GitHub skill + link it
 relaydeck skills link ./my-skill --workspace api   # symlink/copy a local skill
 relaydeck skills unlink <name> --workspace api
 ```
@@ -94,7 +95,8 @@ own skill dir, per harness:
 
 - **Runtime (plugin-contributed) skills** — e.g. messaging's reply contract —
   are injected **always** (otherwise messaging wouldn't work).
-- **User skills** are **gated** by the agent's `skills` list.
+- **User skills** are **gated** for the whole workspace by `skills` in
+  `agent.toml`; there is no per-agent skill allow-list.
 - Coverage is pinned by `tests/test_harness_skill_injection_matrix.py`, so the
   behaviour is identical across Claude Code, Codex, Cursor, opencode, pi.
 
@@ -113,9 +115,12 @@ relaydeck agent create builder  --type codex-cli   --workspace api \
     --purpose "Implement the approved change"
 relaydeck agent start reviewer builder
 
-relaydeck agent list                     # every agent + live semantic status
+relaydeck agent list                     # current workspace + semantic status
+relaydeck agent list -A                  # every agent, across all workspaces
 relaydeck agent screen reviewer          # render any agent's screen right now
-relaydeck agent stop|restart|rm reviewer
+relaydeck agent stop reviewer
+relaydeck agent restart reviewer         # restarts with its configured session flags
+relaydeck agent rm reviewer --yes         # permanent; daemon-backed
 ```
 
 Harness `--type` (`-t`): `claude-code`, `codex-cli`, `cursor-cli`,
@@ -137,8 +142,8 @@ relaydeck agent transcript reviewer      # last screen of an exited agent
 **Keep agents healthy:**
 
 ```sh
-relaydeck context status                 # each agent's context-window fill
-relaydeck agent compact reviewer         # KV-safe in-place compaction when filling
+relaydeck context-watch status           # each agent's context-window fill
+relaydeck agent compact reviewer         # in-place compaction (Claude Code currently)
 relaydeck agent unblock builder --answer y   # answer a native prompt (or --enter/--key)
 relaydeck agent escalate builder -m "needs a human call"   # ping your channels (HITL)
 ```
@@ -188,7 +193,7 @@ relaydeck usage-limits status            # rolling session/weekly quota state
 relaydeck autopilot status               # native-prompt auto-answer posture
 ```
 
-The web dashboard (`open http://127.0.0.1:8765`) shows the same data — it's the
+The web dashboard (use the URL printed by `relaydeck status`) shows the same data — it's the
 platform-level **`dashboard` plugin**, a peer of the CLI/TUI, not a privileged
 layer. Disable it like any plugin and the CLI + TUI lose nothing.
 
@@ -231,8 +236,8 @@ the tab's endpoint for `{lines:[...]}` content). The bundled `autopilot`,
 
 ```sh
 relaydeck agent stop reviewer builder
-relaydeck agent rm reviewer builder       # delete the specs
-relaydeck workspace rm api                # unregister (leaves the directory)
+relaydeck agent rm reviewer builder --yes # stop + delete through the daemon
+relaydeck workspace rm api --yes          # unregister (leaves the directory)
 ```
 
 Always clean up agents spawned for a one-off job — a leaked fleet is the

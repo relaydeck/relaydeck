@@ -36,7 +36,7 @@ jobs:
       matrix:
         method: [pip, install_sh]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build relaydeck-test:base
         run: docker build -f tests/docker/Dockerfile.base -t relaydeck-test:base .
